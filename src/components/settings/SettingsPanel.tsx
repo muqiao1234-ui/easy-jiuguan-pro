@@ -593,8 +593,8 @@ export default function SettingsPanel() {
               </ol>
             </div>
 
-            <div className="mt-3 p-3 bg-slate-900/50 rounded-md border border-slate-700/40">
-              <p className="text-[10px] text-slate-500 leading-relaxed">
+            <div className="mt-3 p-3 bg-amber-50 dark:bg-slate-800/40 rounded-md border border-amber-300 dark:border-amber-600/30">
+              <p className="text-[10px] text-amber-800 dark:text-amber-300/80 leading-relaxed">
                 ※ 凡点击进入本软件、配置模型、或开始对话者，即视为您已阅读并完全同意上述所有条款（包含 Token 消耗及技术免责声明）。如不同意，请立即关闭并彻底删除本单文件程序。
               </p>
             </div>
