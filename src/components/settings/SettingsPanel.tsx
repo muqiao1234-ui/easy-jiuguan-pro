@@ -608,11 +608,11 @@ export default function SettingsPanel() {
               <div className="flex flex-col items-center gap-2 py-2">
                 <img
                   src={DONATE_QR_BASE64}
-                  alt="捐赠二维码"
+                  alt="支付宝捐赠二维码"
                   width="180"
                   className="rounded-lg border border-slate-700/50"
                 />
-                <p className="text-[10px] text-slate-500">自由捐赠，金额随意，心意最重要 ❤️</p>
+                <p className="text-[10px] text-slate-500">支付宝扫码 · 自由捐赠，金额随意，心意最重要 ❤️</p>
               </div>
             </div>
           </div>
