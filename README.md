@@ -277,11 +277,11 @@ npm run preview  # 预览构建产物
 
 ## 请作者喝杯咖啡
 
-如果你在使用中获得了乐趣，或觉得这个项目对你有帮助，欢迎通过下方二维码自由捐赠，支持继续开发与维护。
+如果你在使用中获得了乐趣，或觉得这个项目对你有帮助，欢迎通过下方支付宝二维码自由捐赠，支持继续开发与维护。
 
 <div align="center">
-  <img src="./assets/donate-qr.png" alt="捐赠二维码" width="200" />
-  <p><small>自由捐赠，金额随意，心意最重要 ❤️</small></p>
+  <img src="./assets/donate-qr.png" alt="支付宝捐赠二维码" width="200" />
+  <p><small>支付宝扫码 · 自由捐赠，金额随意，心意最重要 ❤️</small></p>
 </div>
 
 ---
