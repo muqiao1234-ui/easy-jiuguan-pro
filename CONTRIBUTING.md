@@ -27,7 +27,7 @@
 
 ```bash
 # 1. Fork 并克隆
-git clone https://github.com/<your-username>/easy-jiuguan-pro.git
+git clone https://github.com/muqiao1234-ui/easy-jiuguan-pro.git
 cd easy-jiuguan-pro
 
 # 2. 安装依赖

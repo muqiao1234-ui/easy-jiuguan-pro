@@ -97,7 +97,7 @@
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/your-username/easy-jiuguan-pro.git
+git clone https://github.com/muqiao1234-ui/easy-jiuguan-pro.git
 cd easy-jiuguan-pro
 
 # 2. 安装依赖
@@ -288,7 +288,7 @@ npm run preview  # 预览构建产物
 
 ## 许可证
 
-MIT © 2026 [橙橙乔乔](https://github.com/your-username)
+MIT © 2026 [橙橙乔乔](https://github.com/muqiao1234-ui)
 
 ---
 
