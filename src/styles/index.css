@@ -1,0 +1,228 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===== CSS 自定义变量 — 深色模式（默认） ===== */
+:root {
+  --color-bg-base: #020617;      /* slate-950 */
+  --color-bg-surface: #0f172a;   /* slate-900 */
+  --color-bg-elevated: #1e293b;  /* slate-800 */
+  --color-bg-hover: #334155;     /* slate-700 */
+  --color-text-primary: #f1f5f9; /* slate-100 */
+  --color-text-secondary: #94a3b8;/* slate-400 */
+  --color-text-muted: #64748b;   /* slate-500 */
+  --color-border: #1e293b;       /* slate-800 */
+  --color-border-light: #334155; /* slate-700 */
+  --color-accent: #f59e0b;       /* amber-500 */
+  --color-accent-hover: #d97706; /* amber-600 */
+  --scrollbar-thumb: #334155;
+  --scrollbar-track: #0f172a;
+  --overlay-bg: rgba(2, 6, 23, 0.8);
+}
+
+/* ===== 浅色模式覆盖 ===== */
+html:not(.dark) {
+  --color-bg-base: #f8fafc;       /* slate-50 */
+  --color-bg-surface: #ffffff;     /* white */
+  --color-bg-elevated: #f1f5f9;   /* slate-100 */
+  --color-bg-hover: #e2e8f0;      /* slate-200 */
+  --color-text-primary: #0f172a;  /* slate-900 */
+  --color-text-secondary: #475569;/* slate-600 */
+  --color-text-muted: #94a3b8;    /* slate-400 */
+  --color-border: #e2e8f0;        /* slate-200 */
+  --color-border-light: #cbd5e1;  /* slate-300 */
+  --color-accent: #d97706;        /* amber-600 */
+  --color-accent-hover: #b45309;  /* amber-700 */
+  --scrollbar-thumb: #cbd5e1;
+  --scrollbar-track: #f1f5f9;
+  --overlay-bg: rgba(255, 255, 255, 0.8);
+}
+
+/* ===== 全局基础样式 ===== */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: dark;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html:not(.dark) {
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    'Helvetica Neue',
+    Arial,
+    'Noto Sans',
+    'PingFang SC',
+    'Microsoft YaHei',
+    sans-serif;
+  background-color: var(--color-bg-base);
+  color: var(--color-text-primary);
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* ===== 滚动条美化 ===== */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
+  transition: background 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+/* ===== 选中文本颜色 ===== */
+::selection {
+  background-color: rgba(245, 158, 11, 0.3);
+  color: var(--color-text-primary);
+}
+
+/* ===== 焦点样式 ===== */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* ===== 链接默认样式 ===== */
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* ===== 深色模式 Tailwind 类覆盖 ===== */
+/* 当 html 没有 .dark class 时（浅色模式），覆盖硬编码的 slate 暗色 */
+html:not(.dark) .bg-slate-950 { background-color: var(--color-bg-base) !important; }
+html:not(.dark) .bg-slate-900 { background-color: var(--color-bg-surface) !important; }
+html:not(.dark) .bg-slate-900\/80 { background-color: rgba(255, 255, 255, 0.85) !important; }
+html:not(.dark) .bg-slate-900\/60 { background-color: rgba(255, 255, 255, 0.7) !important; }
+html:not(.dark) .bg-slate-900\/40 { background-color: rgba(248, 250, 252, 0.6) !important; }
+html:not(.dark) .bg-slate-800 { background-color: var(--color-bg-elevated) !important; }
+html:not(.dark) .bg-slate-800\/50 { background-color: rgba(241, 245, 249, 0.6) !important; }
+html:not(.dark) .bg-slate-800\/30 { background-color: rgba(241, 245, 249, 0.4) !important; }
+html:not(.dark) .bg-slate-800\/80 { background-color: rgba(241, 245, 249, 0.9) !important; }
+html:not(.dark) .bg-slate-700 { background-color: var(--color-bg-hover) !important; }
+html:not(.dark) .bg-slate-700\/50 { background-color: rgba(226, 232, 240, 0.5) !important; }
+html:not(.dark) .bg-slate-600 { background-color: #cbd5e1 !important; }
+html:not(.dark) .bg-slate-600\/50 { background-color: rgba(203, 213, 225, 0.5) !important; }
+html:not(.dark) .bg-slate-950\/80 { background-color: rgba(241, 245, 249, 0.9) !important; }
+html:not(.dark) .hover\:bg-slate-600:hover { background-color: #e2e8f0 !important; }
+
+html:not(.dark) .text-slate-100 { color: #0f172a !important; }
+html:not(.dark) .text-slate-200 { color: #1e293b !important; }
+html:not(.dark) .text-slate-300 { color: #334155 !important; }
+html:not(.dark) .text-slate-400 { color: #475569 !important; }
+html:not(.dark) .text-slate-500 { color: #64748b !important; }
+html:not(.dark) .text-slate-600 { color: #94a3b8 !important; }
+
+html:not(.dark) .border-slate-600 { border-color: #cbd5e1 !important; }
+html:not(.dark) .border-slate-700 { border-color: #e2e8f0 !important; }
+html:not(.dark) .border-slate-700\/50 { border-color: rgba(226, 232, 240, 0.6) !important; }
+html:not(.dark) .border-slate-800 { border-color: #e2e8f0 !important; }
+
+html:not(.dark) .hover\:bg-slate-700:hover { background-color: #e2e8f0 !important; }
+html:not(.dark) .hover\:bg-slate-800:hover { background-color: #f1f5f9 !important; }
+html:not(.dark) .hover\:bg-slate-800\/50:hover { background-color: rgba(241, 245, 249, 0.5) !important; }
+html:not(.dark) .hover\:bg-slate-800\/80:hover { background-color: rgba(241, 245, 249, 0.8) !important; }
+html:not(.dark) .hover\:border-slate-600:hover { border-color: #cbd5e1 !important; }
+html:not(.dark) .hover\:text-slate-300:hover { color: #334155 !important; }
+html:not(.dark) .hover\:text-slate-200:hover { color: #1e293b !important; }
+
+html:not(.dark) .placeholder-slate-500::placeholder { color: #94a3b8 !important; }
+
+/* ===== 浅色模式 — 缺失的 slate-900/90 透明度覆盖（TopBar、Sidebar 关键修复） ===== */
+html:not(.dark) .bg-slate-900\/90 { background-color: rgba(255, 255, 255, 0.9) !important; }
+
+/* ===== 浅色模式 Amber 色系覆盖 ===== */
+/* Amber 文字 — 浅色模式下加深以保证可读性 */
+html:not(.dark) .text-amber-500 { color: #d97706 !important; }       /* → amber-600 */
+html:not(.dark) .text-amber-400 { color: #d97706 !important; }       /* → amber-600 */
+html:not(.dark) .text-amber-300 { color: #b45309 !important; }       /* → amber-700 */
+html:not(.dark) .text-amber-200\/80 { color: rgba(180, 83, 9, 0.85) !important; }   /* → amber-700 */
+html:not(.dark) .text-amber-400\/80 { color: rgba(217, 119, 6, 0.85) !important; }
+html:not(.dark) .text-amber-400\/70 { color: rgba(217, 119, 6, 0.75) !important; }
+html:not(.dark) .text-amber-600\/60 { color: rgba(180, 83, 9, 0.6) !important; }
+
+/* Amber 悬停文字 */
+html:not(.dark) .hover\:text-amber-400:hover { color: #d97706 !important; }
+html:not(.dark) .hover\:text-amber-300:hover { color: #b45309 !important; }
+
+/* Amber 背景 — 浅色模式下改用暖色淡背景（避免深棕泥色） */
+html:not(.dark) .bg-amber-900\/20 { background-color: rgba(254, 243, 199, 0.5) !important; }
+html:not(.dark) .bg-amber-900\/30 { background-color: rgba(254, 243, 199, 0.6) !important; }
+html:not(.dark) .bg-amber-900\/50 { background-color: rgba(254, 215, 170, 0.5) !important; }
+html:not(.dark) .bg-amber-500\/5  { background-color: rgba(254, 243, 199, 0.4) !important; }
+html:not(.dark) .bg-amber-600\/20 { background-color: rgba(254, 215, 170, 0.4) !important; }
+html:not(.dark) .bg-amber-600\/10 { background-color: rgba(254, 243, 199, 0.3) !important; }
+html:not(.dark) .hover\:bg-amber-900\/10:hover { background-color: rgba(254, 243, 199, 0.35) !important; }
+
+/* Amber 边框 */
+html:not(.dark) .border-amber-700 { border-color: #d97706 !important; }
+html:not(.dark) .border-amber-700\/40 { border-color: rgba(217, 119, 6, 0.3) !important; }
+html:not(.dark) .border-amber-700\/50 { border-color: rgba(217, 119, 6, 0.35) !important; }
+html:not(.dark) .border-amber-500 { border-color: #d97706 !important; }
+html:not(.dark) .border-amber-600\/30 { border-color: rgba(217, 119, 6, 0.25) !important; }
+html:not(.dark) .border-amber-600\/50 { border-color: rgba(217, 119, 6, 0.4) !important; }
+
+/* ===== 工具类 ===== */
+@layer components {
+  .glass-panel {
+    @apply bg-slate-900/80 backdrop-blur-sm border border-slate-700/50 rounded-lg;
+  }
+
+  .btn-primary {
+    @apply bg-amber-500 hover:bg-amber-600 text-slate-950 font-semibold
+           px-4 py-2 rounded-lg transition-colors duration-150
+           focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400;
+  }
+
+  .btn-secondary {
+    @apply bg-slate-700 hover:bg-slate-600 text-slate-100 font-medium
+           px-4 py-2 rounded-lg transition-colors duration-150
+           border border-slate-600;
+  }
+
+  .input-field {
+    @apply bg-slate-800 border border-slate-600 rounded-lg px-3 py-2
+           text-slate-100 placeholder-slate-500
+           focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500
+           transition-colors duration-150;
+  }
+}

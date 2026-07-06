@@ -1,0 +1,130 @@
+sequenceDiagram
+    actor User
+    participant ChatInput as ChatInput.tsx
+    participant useChat as useChat Hook
+    participant Context as Context Assembler
+    participant Scanner as WorldBook Scanner
+    participant DB as localForage (IndexedDB)
+    participant SSE as SSE Parser
+    participant API as LLM API (fetch)
+
+    %% ============ 流程 1: 发送消息到角色A ============
+    rect rgb(15, 23, 42)
+        Note over User,API: 📤 流程1：发送消息到角色A（含 SSE 流式传输）
+
+        User->>ChatInput: 输入文本 + 点击 [→A]
+        ChatInput->>useChat: sendMessage('charA', content)
+
+        useChat->>DB: 创建 user MessageNode
+        DB-->>useChat: userNode
+
+        useChat->>Scanner: scan(conversationId, recentRounds=20)
+        Scanner->>DB: 获取最近 M 轮消息
+        DB-->>Scanner: recentMessages[]
+        Scanner->>Scanner: 正则匹配 worldbook keys
+        Scanner->>Scanner: 按 priority 排序，取 top 3
+        Scanner-->>useChat: matchedEntries[0..3]
+
+        useChat->>Context: assemble({characterA, scribeContent, worldbookEntries, recentMessages, distilledNodes})
+        Context-->>useChat: AssembledContext (messages[])
+
+        useChat->>API: POST {model, messages[], stream:true}
+        Note over API: Accept: text/event-stream
+
+        loop ReadableStream 读取
+            API-->>SSE: data: {...} chunk
+            SSE->>SSE: 解析行，处理截断
+            SSE-->>useChat: SSEChunk {content, done:false}
+            useChat-->>ChatInput: 更新流式文本（UI 实时渲染）
+            ChatInput-->>User: 看到逐字输出
+        end
+
+        API-->>SSE: data: [DONE]
+        SSE-->>useChat: SSEChunk {content:"", done:true}
+
+        useChat->>DB: 创建 charA MessageNode（完整文本）
+        useChat->>DB: 更新 userNode.childrenIds（追加）
+        useChat->>DB: 更新 userNode.parentId.childrenIds
+        DB-->>useChat: 保存完成
+
+        useChat-->>ChatInput: 流式完成，显示完整消息气泡
+        ChatInput-->>User: 对话界面更新
+    end
+
+    %% ============ 流程 2: 角色B 旁听 ============
+    rect rgb(30, 41, 59)
+        Note over User,API: 👂 流程1B：角色B旁听（单次离散触发）
+
+        User->>ChatInput: 点击 [👂 让B旁听]
+        ChatInput->>useChat: sendMessage('charB_eavesdrop', lastContext)
+
+        useChat->>DB: 获取当前对话上下文
+        DB-->>useChat: recentMessages
+
+        useChat->>Context: assemble({characterB, scribeContent, ...})
+        Context-->>useChat: AssembledContext
+
+        useChat->>API: POST (角色B 的 systemPrompt + 上下文)
+        Note over API: "请基于以上对话，以角色B身份给出一个观察反应"
+
+        API-->>SSE: 流式返回 B 的观察
+        SSE-->>useChat: SSEChunk (逐字)
+        useChat-->>ChatInput: 流式渲染 B 的插话
+
+        API-->>SSE: data: [DONE]
+
+        useChat->>DB: 创建 charB MessageNode
+        DB-->>useChat: 保存完成
+
+        useChat-->>ChatInput: B 旁听完成（停止，不继续）
+        ChatInput-->>User: 显示 B 的观察气泡
+    end
+
+    %% ============ 流程 3: 记忆蒸馏 ============
+    rect rgb(51, 65, 85)
+        Note over User,API: 🧪 流程2：记忆蒸馏触发
+
+        User->>ChatInput: 点击「蒸馏」按钮
+        ChatInput->>useChat: triggerDistillation(conversationId)
+
+        useChat->>DB: 获取未归档消息节点（按时间排序）
+        DB-->>useChat: unarchivedNodes[]
+
+        useChat->>useChat: 计算轮次范围 (第X轮-第Y轮)
+        useChat->>DB: 获取蒸馏模型配置
+        DB-->>useChat: distillationModel
+
+        useChat->>Context: 组装蒸馏 prompt
+        Note over Context: "请将以下对话浓缩为简要摘要：{unarchivedNodes}"
+
+        useChat->>API: POST 蒸馏模型 (stream=false)
+        API-->>useChat: 蒸馏结果文本
+
+        useChat->>DB: 创建 distilled MessageNode
+        Note over DB: role='distilled'<br/>content="📝 记忆 第X轮-第Y轮：{文本}"
+        DB-->>useChat: distilledNode
+
+        useChat->>DB: 标记被蒸馏节点 isArchived=true
+        DB-->>useChat: 归档完成
+
+        useChat-->>ChatInput: 蒸馏完成，显示记忆结晶气泡
+        ChatInput-->>User: 对话中出现 💎 蒸馏气泡（含操作按钮）
+    end
+
+    %% ============ 流程 4: 创建分支 ============
+    rect rgb(71, 85, 105)
+        Note over User,DB: ✂️ 流程3：创建对话分支
+
+        User->>ChatInput: 点击消息气泡 [✂️ 分支]
+        ChatInput->>useChat: createBranch(messageNodeId)
+
+        useChat->>DB: 获取目标 MessageNode
+        DB-->>useChat: targetNode
+
+        useChat->>DB: 更新 targetNode.childrenIds（追加新分支指针）
+        useChat->>DB: 更新 conversation.currentActiveNodeId = targetNode.id
+        DB-->>useChat: 分支创建完成
+
+        useChat-->>ChatInput: 切换到新分支（空叶子）
+        ChatInput-->>User: 分支树 UI 更新，输入框可用
+    end

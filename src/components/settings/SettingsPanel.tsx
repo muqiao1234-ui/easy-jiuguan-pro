@@ -1,0 +1,502 @@
+import React, { useRef, useState } from 'react';
+import { useApp } from '../../hooks/useApp';
+import Toggle from '../ui/Toggle';
+import Button from '../ui/Button';
+import { processWallpaper } from '../../utils/wallpaper';
+import {
+  DEFAULT_MUTUAL_OBSERVE_PROMPT,
+  DEFAULT_TPL_USER_WRAPPER,
+  DEFAULT_TPL_OTHER_CHAR_WRAPPER,
+  DEFAULT_TPL_IDENTITY_ANCHOR,
+  DEFAULT_TPL_WORLD_BOOK_PREFIX,
+  DEFAULT_TPL_DISTILLED_PREFIX,
+  DEFAULT_TPL_STATE_BOOK_PREFIX,
+  DEFAULT_TPL_EAVESDROP_APPEND,
+  DEFAULT_TPL_GALGAME_CHAR_INJECTION,
+  DEFAULT_TPL_IMPLANT_MEMORY_PREFIX,
+  DEFAULT_TPL_IMPLANT_SCRIBE_PREFIX,
+  DEFAULT_TPL_DISTILLED_NODE_PREFIX,
+} from '../../utils/constants';
+
+export default function SettingsPanel() {
+  const { state, dispatch } = useApp();
+  const wallpaperInputRef = useRef<HTMLInputElement>(null);
+  const [observeOpen, setObserveOpen] = useState(false);
+  const [advOpen, setAdvOpen] = useState(false);
+
+  const handleWallpaperUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const dataUrl = await processWallpaper(file);
+      dispatch({ type: 'SET_WALLPAPER', config: { image: dataUrl } });
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '壁纸上传失败');
+    }
+    // 清空 input 允许重复上传同一文件
+    if (wallpaperInputRef.current) wallpaperInputRef.current.value = '';
+  };
+
+  return (
+    <div className="space-y-4 p-1">
+      <h3 className="text-sm font-semibold text-slate-300">设置</h3>
+
+      {/* 主题与壁纸 */}
+      <div className="bg-slate-800/50 rounded-lg p-3 space-y-3 border border-slate-700/50">
+        <h4 className="text-xs font-semibold text-purple-400 uppercase tracking-wider">主题与壁纸</h4>
+
+        {/* 主题切换 */}
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-slate-400">主题模式</span>
+          <div className="flex items-center gap-1 bg-slate-900 rounded-lg p-0.5">
+            <button
+              onClick={() => dispatch({ type: 'SET_THEME', theme: 'light' })}
+              className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                state.theme === 'light' ? 'bg-amber-500 text-white' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              ☀️ 浅色
+            </button>
+            <button
+              onClick={() => dispatch({ type: 'SET_THEME', theme: 'dark' })}
+              className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                state.theme === 'dark' ? 'bg-indigo-500 text-white' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              🌙 深色
+            </button>
+          </div>
+        </div>
+
+        {/* 加粗变色开关 — 仅影响 AI 气泡内 bold 文字 */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <span className="text-xs text-slate-400">AI 气泡加粗变色</span>
+            <p className="text-[10px] text-slate-500 leading-snug">
+              开启后，角色气泡内的加粗文字按各自色系着色（A 翠绿/B 紫罗兰），主题模式自适应。
+            </p>
+          </div>
+          <Toggle
+            checked={state.boldColorize}
+            onChange={(v) => dispatch({ type: 'SET_BOLD_COLORIZE', enabled: v })}
+          />
+        </div>
+        <div className="flex items-center gap-2 text-[10px]">
+          <span className="font-bold text-emerald-700 dark:text-emerald-300">角色A 粗体预览</span>
+          <span className="font-bold text-violet-700 dark:text-violet-300">角色B 粗体预览</span>
+        </div>
+
+        {/* 壁纸上传 */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-slate-400">背景壁纸</span>
+            <div className="flex items-center gap-2">
+              {state.wallpaper.image && (
+                <img src={state.wallpaper.image} alt="wallpaper" className="w-12 h-8 object-cover rounded border border-slate-600" />
+              )}
+              <Button size="sm" variant="secondary" onClick={() => wallpaperInputRef.current?.click()}>
+                上传壁纸
+              </Button>
+              {state.wallpaper.image && (
+                <Button size="sm" variant="ghost" onClick={() => dispatch({ type: 'SET_WALLPAPER', config: { image: '' } })}>
+                  移除
+                </Button>
+              )}
+              <input
+                ref={wallpaperInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleWallpaperUpload}
+                className="hidden"
+              />
+            </div>
+          </div>
+          <p className="text-[10px] text-slate-500">上传新壁纸会覆盖旧壁纸。自动压缩至 1920px / JPEG 75%。</p>
+        </div>
+
+        {/* 遮罩设置 */}
+        {state.wallpaper.image && (
+          <div className="space-y-2 pt-1">
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">
+                遮罩透明度: {Math.round(state.wallpaper.overlayOpacity * 100)}%
+              </label>
+              <input
+                type="range" min={0} max={1} step={0.05}
+                value={state.wallpaper.overlayOpacity}
+                onChange={(e) => dispatch({ type: 'SET_WALLPAPER', config: { overlayOpacity: parseFloat(e.target.value) } })}
+                className="w-full accent-purple-500"
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-slate-400">遮罩模式</span>
+              <div className="flex items-center gap-1 bg-slate-900 rounded-lg p-0.5">
+                <button
+                  onClick={() => dispatch({ type: 'SET_WALLPAPER', config: { overlayMode: 'light' } })}
+                  className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                    state.wallpaper.overlayMode === 'light' ? 'bg-white text-slate-900' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  白色遮罩
+                </button>
+                <button
+                  onClick={() => dispatch({ type: 'SET_WALLPAPER', config: { overlayMode: 'dark' } })}
+                  className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                    state.wallpaper.overlayMode === 'dark' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  黑灰遮罩
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Distillation Settings */}
+      <div className="bg-slate-800/50 rounded-lg p-3 space-y-3 border border-slate-700/50">
+        <h4 className="text-xs font-semibold text-amber-400 uppercase tracking-wider">记忆蒸馏</h4>
+        <div>
+          <label className="block text-xs text-slate-400 mb-1">
+            触发阈值（轮数）: {state.distillationConfig.triggerThreshold}
+          </label>
+          <input
+            type="range" min={5} max={50} step={5}
+            value={state.distillationConfig.triggerThreshold}
+            onChange={(e) => dispatch({ type: 'UPDATE_DISTILLATION_CONFIG', config: { triggerThreshold: parseInt(e.target.value) } })}
+            className="w-full accent-amber-500"
+          />
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-slate-400">自动触发蒸馏</span>
+          <Toggle
+            checked={state.distillationConfig.autoTrigger}
+            onChange={(v) => dispatch({ type: 'UPDATE_DISTILLATION_CONFIG', config: { autoTrigger: v } })}
+          />
+        </div>
+        {/* Custom distillation prompt */}
+        <div>
+          <label className="block text-xs text-slate-400 mb-1">
+            蒸馏提示词模板（<code className="text-amber-400 bg-slate-900 px-1 rounded">{'{dialogue}'}</code> 会被替换为对话文本）
+          </label>
+          <textarea
+            value={state.distillationConfig.distillationPrompt}
+            onChange={(e) =>
+              dispatch({
+                type: 'UPDATE_DISTILLATION_CONFIG',
+                config: { distillationPrompt: e.target.value },
+              })
+            }
+            rows={4}
+            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 
+              placeholder-slate-500 resize-none focus:outline-none focus:border-amber-600/50 font-mono"
+          />
+        </div>
+      </div>
+
+      {/* Context Settings */}
+      <div className="bg-slate-800/50 rounded-lg p-3 space-y-3 border border-slate-700/50">
+        <h4 className="text-xs font-semibold text-blue-400 uppercase tracking-wider">上下文配置</h4>
+        <div>
+          <label className="block text-xs text-slate-400 mb-1">
+            最近轮数 (M): {state.contextConfig.recentRounds}
+          </label>
+          <input
+            type="range" min={5} max={50} step={5}
+            value={state.contextConfig.recentRounds}
+            onChange={(e) => dispatch({ type: 'UPDATE_CONTEXT_CONFIG', config: { recentRounds: parseInt(e.target.value) } })}
+            className="w-full accent-blue-500"
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-slate-400 mb-1">
+            最大蒸馏节点数 (N): {state.contextConfig.maxDistilledNodes}
+          </label>
+          <input
+            type="range" min={1} max={15} step={1}
+            value={state.contextConfig.maxDistilledNodes}
+            onChange={(e) => dispatch({ type: 'UPDATE_CONTEXT_CONFIG', config: { maxDistilledNodes: parseInt(e.target.value) } })}
+            className="w-full accent-blue-500"
+          />
+        </div>
+      </div>
+
+      {/* State Book Settings */}
+      <div className="bg-slate-800/50 rounded-lg p-3 space-y-3 border border-slate-700/50">
+        <h4 className="text-xs font-semibold text-green-400 uppercase tracking-wider">独立状态书</h4>
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-slate-400">启用状态书（吸附到 AI 气泡）</span>
+          <Toggle
+            checked={state.scribeEnabled}
+            onChange={(v) => dispatch({ type: 'SET_SCRIBE_ENABLED', enabled: v })}
+          />
+        </div>
+        {state.scribeEnabled && (
+          <>
+            {/* 引擎类型选择 */}
+            <div className="space-y-1.5">
+              <label className="block text-xs text-slate-400">状态书引擎</label>
+              <div className="flex items-center gap-1 bg-slate-900 rounded-lg p-0.5">
+                <button
+                  onClick={() => dispatch({ type: 'SET_SCRIBE_ENGINE', engine: 'text' })}
+                  className={`flex-1 px-2 py-1 text-[11px] rounded-md transition-colors ${
+                    state.scribeEngine === 'text' ? 'bg-amber-500 text-white' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  📜 文本模式
+                </button>
+                <button
+                  onClick={() => dispatch({ type: 'SET_SCRIBE_ENGINE', engine: 'galgame' })}
+                  className={`flex-1 px-2 py-1 text-[11px] rounded-md transition-colors ${
+                    state.scribeEngine === 'galgame' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  🎮 Galgame 数值
+                </button>
+              </div>
+              <p className="text-[10px] text-slate-500">
+                {state.scribeEngine === 'text' && '传统文本状态书，AI 总结后以文本气泡展示'}
+                {state.scribeEngine === 'galgame' && '超低消耗数值引擎（每2轮），像素风卡片，非对称注入防AI谄媚'}
+              </p>
+            </div>
+
+            {/* Galgame Prompt 编辑器 */}
+            {state.scribeEngine === 'galgame' && (
+              <div className="space-y-1">
+                <label className="text-[11px] text-slate-500">Galgame 引擎 Prompt（可自定义）:</label>
+                <textarea
+                  value={state.galgamePrompt}
+                  onChange={(e) => dispatch({ type: 'SET_GALGAME_PROMPT', prompt: e.target.value })}
+                  rows={6}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-[10px] text-slate-200 
+                    placeholder-slate-500 resize-none focus:outline-none focus:border-purple-600/50 font-mono"
+                  placeholder="留空使用默认 Galgame 引擎 Prompt..."
+                />
+              </div>
+            )}
+
+            {/* 插入策略模式 */}
+            <div className="space-y-1.5">
+              <label className="block text-xs text-slate-400">插入策略模式</label>
+              <div className="flex items-center gap-1 bg-slate-900 rounded-lg p-0.5">
+                <button
+                  onClick={() => dispatch({ type: 'SET_SCRIBE_MODE', mode: 'charA' })}
+                  className={`flex-1 px-2 py-1 text-[11px] rounded-md transition-colors ${
+                    state.scribeMode === 'charA' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  仅角色A
+                </button>
+                <button
+                  onClick={() => dispatch({ type: 'SET_SCRIBE_MODE', mode: 'charB' })}
+                  className={`flex-1 px-2 py-1 text-[11px] rounded-md transition-colors ${
+                    state.scribeMode === 'charB' ? 'bg-violet-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  仅角色B
+                </button>
+                <button
+                  onClick={() => dispatch({ type: 'SET_SCRIBE_MODE', mode: 'auto' })}
+                  className={`flex-1 px-2 py-1 text-[11px] rounded-md transition-colors ${
+                    state.scribeMode === 'auto' ? 'bg-amber-500 text-white' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  自动（就近）
+                </button>
+              </div>
+              <p className="text-[10px] text-slate-500">
+                {state.scribeMode === 'charA' && '状态书仅生成并绑定在角色A的回复气泡下'}
+                {state.scribeMode === 'charB' && '状态书仅生成并绑定在角色B的回复气泡下'}
+                {state.scribeMode === 'auto' && '触发时自动绑定到最新生成的 assistant 消息'}
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">
+                AI 总结触发间隔（每 N 轮）: {state.scribeTriggerInterval}
+              </label>
+              <input
+                type="range" min={1} max={20} step={1}
+                value={state.scribeTriggerInterval}
+                onChange={(e) => dispatch({ type: 'SET_SCRIBE_TRIGGER_INTERVAL', interval: parseInt(e.target.value) })}
+                className="w-full accent-green-500"
+              />
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Mutual Observe Prompt Settings */}
+      <div className="bg-slate-800/50 rounded-lg p-3 space-y-3 border border-slate-700/50">
+        <button
+          onClick={() => setObserveOpen(!observeOpen)}
+          className="flex items-center justify-between w-full"
+        >
+          <h4 className="text-xs font-semibold text-cyan-400 uppercase tracking-wider">
+            🤝 互相认识 · 观察提示词
+          </h4>
+          <span className="text-slate-500 text-xs">{observeOpen ? '▾' : '▸'}</span>
+        </button>
+        {observeOpen && (
+          <div className="space-y-2">
+            <p className="text-[10px] text-slate-500 leading-relaxed">
+              点击"互相认识"按钮时，系统会用主AI分别观察对方角色卡，提取外部可观察特征，
+              生成两条世界书条目互相插入。<code className="text-cyan-400 bg-slate-900 px-1 rounded">{'{charPrompt}'}</code> 会被替换为对方角色卡的 systemPrompt。
+              留空则使用默认提示词。
+            </p>
+            <textarea
+              value={state.mutualObservePrompt}
+              onChange={(e) => dispatch({ type: 'SET_MUTUAL_OBSERVE_PROMPT', prompt: e.target.value })}
+              rows={8}
+              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-[11px] text-slate-200
+                placeholder-slate-500 resize-none focus:outline-none focus:border-cyan-600/50 font-mono leading-relaxed"
+              placeholder={DEFAULT_MUTUAL_OBSERVE_PROMPT}
+            />
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => dispatch({ type: 'SET_MUTUAL_OBSERVE_PROMPT', prompt: DEFAULT_MUTUAL_OBSERVE_PROMPT })}
+              >
+                恢复默认
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => dispatch({ type: 'SET_MUTUAL_OBSERVE_PROMPT', prompt: '' })}
+              >
+                清空
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Data Management */}
+      <div className="bg-slate-800/50 rounded-lg p-3 space-y-2 border border-slate-700/50">
+        <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">数据管理</h4>
+        <p className="text-xs text-slate-500">所有数据存储在浏览器 IndexedDB 中，不会上传到任何服务器。</p>
+        <div className="flex gap-2">
+          <Button size="sm" variant="secondary" onClick={async () => {
+            const stores = await import('../../db/stores');
+            const [models, chars, convs, nodes, wbs, states] = await Promise.all([
+              stores.getAllModels(), stores.getAllCharacters(), stores.getAllConversations(),
+              import('../../db/index').then((db) => db.messageNodesStore.getItem('data') || []),
+              stores.getAllWorldBooks(),
+              import('../../db/index').then((db) => db.globalStatesStore.getItem('data') || []),
+            ]);
+            // 安全：导出时剔除所有模型的 apiKey，防止意外分享配置文件导致 API Key 泄露。
+            const safeModels = (models as any[]).map(({ apiKey, ...rest }) => rest);
+            const blob = new Blob([JSON.stringify({ models: safeModels, characters: chars, conversations: convs, message_nodes: nodes, worldbooks: wbs, global_states: states }, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a'); a.href = url; a.download = 'tavern-backup.json'; a.click();
+            URL.revokeObjectURL(url);
+          }}>导出数据</Button>
+          <Button size="sm" variant="secondary" onClick={() => {
+            const input = document.createElement('input'); input.type = 'file'; input.accept = '.json';
+            input.onchange = async (e) => {
+              const file = (e.target as HTMLInputElement).files?.[0];
+              if (!file) return;
+              const text = await file.text();
+              try {
+                const data = JSON.parse(text);
+                const db = await import('../../db/index');
+                // 安全：导入时清空所有 apiKey，避免从他人分享的配置中继承密钥。
+                // 用户导入后需手动填写各模型的 apiKey。
+                if (data.models) {
+                  data.models = (data.models as any[]).map((m: any) => ({ ...m, apiKey: '' }));
+                  await db.modelsStore.setItem('data', data.models);
+                }
+                if (data.characters) await db.charactersStore.setItem('data', data.characters);
+                if (data.conversations) await db.conversationsStore.setItem('data', data.conversations);
+                if (data.message_nodes) await db.messageNodesStore.setItem('data', data.message_nodes);
+                if (data.worldbooks) await db.worldbooksStore.setItem('data', data.worldbooks);
+                if (data.global_states) await db.globalStatesStore.setItem('data', data.global_states);
+                alert('数据导入成功，请刷新页面。');
+              } catch { alert('导入失败：无效的 JSON 文件'); }
+            };
+            input.click();
+          }}>导入数据</Button>
+        </div>
+      </div>
+      {/* Advanced Prompt Templates */}
+      <div className="bg-slate-800/50 rounded-lg p-3 space-y-3 border border-red-700/30">
+        <button
+          onClick={() => setAdvOpen(!advOpen)}
+          className="flex items-center justify-between w-full"
+        >
+          <h4 className="text-xs font-semibold text-red-400 uppercase tracking-wider">
+            ⚠️ 高级提示词设置
+          </h4>
+          <span className="text-slate-500 text-xs">{advOpen ? '▾' : '▸'}</span>
+        </button>
+        {!advOpen && (
+          <p className="text-[10px] text-slate-500">
+            修改以下提示词模板可能会影响框架行为。点击展开查看和编辑所有预设提示词。
+          </p>
+        )}
+        {advOpen && (
+          <div className="space-y-4">
+            <div className="p-2 bg-red-50 dark:bg-red-950/30 rounded border border-red-200 dark:border-red-700/30">
+              <p className="text-[10px] text-red-700 dark:text-red-300 leading-relaxed">
+                ⚠️ <strong>警告</strong>：以下模板控制框架的核心行为（身份隔离、上下文注入、消息包装等）。
+                修改可能导致角色混淆、上下文丢失或其他不可预期的问题。
+                每个模板都支持占位符（如 <code className="text-red-600 dark:text-red-200 bg-red-100 dark:bg-slate-900 px-1 rounded">{'{content}'}</code>、
+                <code className="text-red-600 dark:text-red-200 bg-red-100 dark:bg-slate-900 px-1 rounded">{'{charName}'}</code>），请确保修改后保留必要的占位符。
+                留空则使用默认值。
+              </p>
+            </div>
+            {([
+              { key: 'tplUserWrapper', label: '用户消息包裹', desc: '包装真实用户输入，用于身份隔离。占位符：{content}', defaultVal: DEFAULT_TPL_USER_WRAPPER, rows: 2 },
+              { key: 'tplOtherCharWrapper', label: '对方角色消息包裹', desc: '包装对方角色发言，与用户消息区分。占位符：{otherCharName}, {content}', defaultVal: DEFAULT_TPL_OTHER_CHAR_WRAPPER, rows: 2 },
+              { key: 'tplIdentityAnchor', label: '结尾身份锚点', desc: '对话末尾强身份提示，防止角色漂变。占位符：{charName}, {otherCharName}', defaultVal: DEFAULT_TPL_IDENTITY_ANCHOR, rows: 4 },
+              { key: 'tplWorldBookPrefix', label: '世界书注入前缀', desc: '世界书条目注入为 system 消息的前缀。占位符：{key}, {value}', defaultVal: DEFAULT_TPL_WORLD_BOOK_PREFIX, rows: 2 },
+              { key: 'tplDistilledPrefix', label: '蒸馏摘要注入前缀', desc: '记忆结晶注入为 system 消息的前缀。占位符：{content}', defaultVal: DEFAULT_TPL_DISTILLED_PREFIX, rows: 2 },
+              { key: 'tplStateBookPrefix', label: '状态书注入前缀', desc: '状态书内容注入为 system 消息的前缀。占位符：{content}', defaultVal: DEFAULT_TPL_STATE_BOOK_PREFIX, rows: 2 },
+              { key: 'tplEavesdropAppend', label: '旁听附加指令', desc: '旁听功能追加到角色 systemPrompt 末尾的指令。无占位符。', defaultVal: DEFAULT_TPL_EAVESDROP_APPEND, rows: 3 },
+              { key: 'tplGalgameCharInjection', label: 'Galgame 角色性格注入', desc: '将角色卡 systemPrompt 包装后注入 Galgame 引擎。占位符：{charPrompt}', defaultVal: DEFAULT_TPL_GALGAME_CHAR_INJECTION, rows: 2 },
+              { key: 'tplImplantMemoryPrefix', label: '植入记忆结晶前缀', desc: '一次性植入记忆功能中记忆结晶的前缀。占位符：{content}', defaultVal: DEFAULT_TPL_IMPLANT_MEMORY_PREFIX, rows: 2 },
+              { key: 'tplImplantScribePrefix', label: '植入状态书前缀', desc: '一次性植入记忆功能中状态书的前缀。占位符：{content}', defaultVal: DEFAULT_TPL_IMPLANT_SCRIBE_PREFIX, rows: 2 },
+              { key: 'tplDistilledNodePrefix', label: '蒸馏节点生成格式', desc: '蒸馏完成后生成的 distilled 消息节点格式。占位符：{total}, {summary}', defaultVal: DEFAULT_TPL_DISTILLED_NODE_PREFIX, rows: 2 },
+            ] as const).map((item) => (
+              <div key={item.key} className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] text-slate-400 font-medium">{item.label}</label>
+                  <button
+                    onClick={() => dispatch({ type: 'SET_ADV_TPL', key: item.key, value: '' })}
+                    className="text-[10px] text-slate-500 hover:text-amber-400"
+                  >
+                    恢复默认
+                  </button>
+                </div>
+                <p className="text-[10px] text-slate-500 leading-relaxed">{item.desc}</p>
+                <textarea
+                  value={(state as any)[item.key] as string}
+                  onChange={(e) => dispatch({ type: 'SET_ADV_TPL', key: item.key, value: e.target.value })}
+                  rows={item.rows}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-[10px] text-slate-200
+                    placeholder-slate-500 resize-none focus:outline-none focus:border-red-600/50 font-mono leading-relaxed"
+                  placeholder={item.defaultVal}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Debug */}
+      <div className="bg-slate-800/50 rounded-lg p-3 space-y-2 border border-slate-700/50">
+        <h4 className="text-xs font-semibold text-red-400 uppercase tracking-wider">⚠️ 调试功能</h4>
+        <p className="text-[10px] text-slate-500">以下功能仅供开发调试使用，普通用户无需开启。</p>
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-slate-400">调试·原始提示词下载</span>
+          <Toggle
+            checked={state.debugMode}
+            onChange={() => dispatch({ type: 'TOGGLE_DEBUG' })}
+          />
+        </div>
+        <p className="text-[10px] text-slate-600">开启后，AI 回复气泡底部将出现「📄 导出原始 Prompt」按钮，可下载完整 messages 数组。</p>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,9 @@
+{
+  "name": "Easy酒馆Pro",
+  "short_name": "Easy酒馆",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "icons": []
+}

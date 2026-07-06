@@ -1,0 +1,133 @@
+classDiagram
+    %% ============ 核心数据模型 ============
+    class ModelConfig {
+        +string id
+        +string name
+        +string baseUrl
+        +string apiKey
+        +string defaultModel
+        +number latency
+    }
+
+    class Character {
+        +string id
+        +string name
+        +string avatar
+        +string systemPrompt
+        +string? worldBookId
+    }
+
+    class Conversation {
+        +string id
+        +string title
+        +string currentActiveNodeId
+    }
+
+    class MessageNode {
+        +string id
+        +string conversationId
+        +string? parentId
+        +string[] childrenIds
+        +MessageRole role
+        +string senderName
+        +string content
+        +boolean isArchived
+        +number timestamp
+    }
+
+    class WorldBook {
+        +string id
+        +string name
+        +WorldBookEntry[] entries
+    }
+
+    class WorldBookEntry {
+        +string id
+        +string[] keys
+        +string value
+        +number priority
+    }
+
+    class GlobalState {
+        +string conversationId
+        +string scribeContent
+    }
+
+    %% ============ 枚举 ============
+    class MessageRole {
+        <<enumeration>>
+        user
+        charA
+        charB
+        system
+        distilled
+    }
+
+    class SendTarget {
+        <<type>>
+        charA
+        charB
+        charB_eavesdrop
+    }
+
+    class ViewType {
+        <<enumeration>>
+        conversations
+        worldbook
+        characters
+        statebook
+        settings
+    }
+
+    %% ============ 配置类型 ============
+    class DistillationConfig {
+        +number triggerThreshold
+        +number concentration
+        +boolean autoTrigger
+    }
+
+    class ContextAssemblyConfig {
+        +number recentRounds
+        +number maxDistilledNodes
+        +number maxWorldBookEntries
+    }
+
+    class AssembledContext {
+        +Message[] messages
+        +ContextMetadata metadata
+    }
+
+    class SSEChunk {
+        +string content
+        +boolean done
+    }
+
+    %% ============ 数据库实例 ============
+    class TavernDB {
+        +LocalForage modelsStore
+        +LocalForage charactersStore
+        +LocalForage conversationsStore
+        +LocalForage messageNodesStore
+        +LocalForage worldbooksStore
+        +LocalForage globalStatesStore
+        +init() Promise~void~
+    }
+
+    %% ============ 关系 ============
+    Conversation "1" --> "*" MessageNode : contains
+    MessageNode "1" --> "*" MessageNode : parentId / childrenIds
+    Character "1" --> "0..1" WorldBook : worldBookId
+    WorldBook "1" --> "*" WorldBookEntry : entries
+    GlobalState "1" --> "1" Conversation : conversationId
+    MessageNode --> MessageRole : role
+    DistillationConfig --> MessageNode : produces distilled nodes
+    ContextAssemblyConfig --> AssembledContext : configures
+
+    %% ============ 样式 ============
+    style ModelConfig fill:#1e293b,stroke:#f59e0b,color:#f1f5f9
+    style Character fill:#1e293b,stroke:#f59e0b,color:#f1f5f9
+    style Conversation fill:#1e293b,stroke:#f59e0b,color:#f1f5f9
+    style MessageNode fill:#334155,stroke:#f59e0b,color:#f1f5f9
+    style WorldBook fill:#1e293b,stroke:#f59e0b,color:#f1f5f9
+    style GlobalState fill:#1e293b,stroke:#f59e0b,color:#f1f5f9
+    style TavernDB fill:#0f172a,stroke:#38bdf8,color:#f1f5f9
