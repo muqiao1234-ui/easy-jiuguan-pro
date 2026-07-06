@@ -49,7 +49,7 @@ export default function SettingsPanel() {
 
         {/* 主题切换 */}
         <div className="flex items-center justify-between">
-          <span className="text-xs text-slate-400">主题模式</span>
+          <span className="text-xs text-slate-400 dark:text-slate-300">主题模式</span>
           <div className="flex items-center gap-1 bg-slate-900 rounded-lg p-0.5">
             <button
               onClick={() => dispatch({ type: 'SET_THEME', theme: 'light' })}
@@ -73,8 +73,8 @@ export default function SettingsPanel() {
         {/* 加粗变色开关 — 仅影响 AI 气泡内 bold 文字 */}
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
-            <span className="text-xs text-slate-400">AI 气泡加粗变色</span>
-            <p className="text-[10px] text-slate-500 leading-snug">
+            <span className="text-xs text-slate-400 dark:text-slate-300">AI 气泡加粗变色</span>
+            <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-snug">
               开启后，角色气泡内的加粗文字按各自色系着色（A 翠绿/B 紫罗兰），主题模式自适应。
             </p>
           </div>
@@ -91,7 +91,7 @@ export default function SettingsPanel() {
         {/* 壁纸上传 */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs text-slate-400">背景壁纸</span>
+            <span className="text-xs text-slate-400 dark:text-slate-300">背景壁纸</span>
             <div className="flex items-center gap-2">
               {state.wallpaper.image && (
                 <img src={state.wallpaper.image} alt="wallpaper" className="w-12 h-8 object-cover rounded border border-slate-600" />
@@ -113,14 +113,14 @@ export default function SettingsPanel() {
               />
             </div>
           </div>
-          <p className="text-[10px] text-slate-500">上传新壁纸会覆盖旧壁纸。自动压缩至 1920px / JPEG 75%。</p>
+          <p className="text-[10px] text-slate-500 dark:text-slate-400">上传新壁纸会覆盖旧壁纸。自动压缩至 1920px / JPEG 75%。</p>
         </div>
 
         {/* 遮罩设置 */}
         {state.wallpaper.image && (
           <div className="space-y-2 pt-1">
             <div>
-              <label className="block text-xs text-slate-400 mb-1">
+              <label className="block text-xs text-slate-400 dark:text-slate-300 mb-1">
                 遮罩透明度: {Math.round(state.wallpaper.overlayOpacity * 100)}%
               </label>
               <input
@@ -131,7 +131,7 @@ export default function SettingsPanel() {
               />
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-xs text-slate-400">遮罩模式</span>
+              <span className="text-xs text-slate-400 dark:text-slate-300">遮罩模式</span>
               <div className="flex items-center gap-1 bg-slate-900 rounded-lg p-0.5">
                 <button
                   onClick={() => dispatch({ type: 'SET_WALLPAPER', config: { overlayMode: 'light' } })}
@@ -159,7 +159,7 @@ export default function SettingsPanel() {
       <div className="bg-slate-800/50 rounded-lg p-3 space-y-3 border border-slate-700/50">
         <h4 className="text-xs font-semibold text-amber-400 uppercase tracking-wider">记忆蒸馏</h4>
         <div>
-          <label className="block text-xs text-slate-400 mb-1">
+          <label className="block text-xs text-slate-400 dark:text-slate-300 mb-1">
             触发阈值（轮数）: {state.distillationConfig.triggerThreshold}
           </label>
           <input
@@ -170,7 +170,7 @@ export default function SettingsPanel() {
           />
         </div>
         <div className="flex items-center justify-between">
-          <span className="text-xs text-slate-400">自动触发蒸馏</span>
+          <span className="text-xs text-slate-400 dark:text-slate-300">自动触发蒸馏</span>
           <Toggle
             checked={state.distillationConfig.autoTrigger}
             onChange={(v) => dispatch({ type: 'UPDATE_DISTILLATION_CONFIG', config: { autoTrigger: v } })}
@@ -178,7 +178,7 @@ export default function SettingsPanel() {
         </div>
         {/* Custom distillation prompt */}
         <div>
-          <label className="block text-xs text-slate-400 mb-1">
+          <label className="block text-xs text-slate-400 dark:text-slate-300 mb-1">
             蒸馏提示词模板（<code className="text-amber-400 bg-slate-900 px-1 rounded">{'{dialogue}'}</code> 会被替换为对话文本）
           </label>
           <textarea
@@ -191,7 +191,7 @@ export default function SettingsPanel() {
             }
             rows={4}
             className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 
-              placeholder-slate-500 resize-none focus:outline-none focus:border-amber-600/50 font-mono"
+ placeholder-slate-500 resize-none focus:outline-none focus:border-amber-600/50 font-mono"
           />
         </div>
       </div>
@@ -200,7 +200,7 @@ export default function SettingsPanel() {
       <div className="bg-slate-800/50 rounded-lg p-3 space-y-3 border border-slate-700/50">
         <h4 className="text-xs font-semibold text-blue-400 uppercase tracking-wider">上下文配置</h4>
         <div>
-          <label className="block text-xs text-slate-400 mb-1">
+          <label className="block text-xs text-slate-400 dark:text-slate-300 mb-1">
             最近轮数 (M): {state.contextConfig.recentRounds}
           </label>
           <input
@@ -211,7 +211,7 @@ export default function SettingsPanel() {
           />
         </div>
         <div>
-          <label className="block text-xs text-slate-400 mb-1">
+          <label className="block text-xs text-slate-400 dark:text-slate-300 mb-1">
             最大蒸馏节点数 (N): {state.contextConfig.maxDistilledNodes}
           </label>
           <input
@@ -227,7 +227,7 @@ export default function SettingsPanel() {
       <div className="bg-slate-800/50 rounded-lg p-3 space-y-3 border border-slate-700/50">
         <h4 className="text-xs font-semibold text-green-400 uppercase tracking-wider">独立状态书</h4>
         <div className="flex items-center justify-between">
-          <span className="text-xs text-slate-400">启用状态书（吸附到 AI 气泡）</span>
+          <span className="text-xs text-slate-400 dark:text-slate-300">启用状态书（吸附到 AI 气泡）</span>
           <Toggle
             checked={state.scribeEnabled}
             onChange={(v) => dispatch({ type: 'SET_SCRIBE_ENABLED', enabled: v })}
@@ -237,7 +237,7 @@ export default function SettingsPanel() {
           <>
             {/* 引擎类型选择 */}
             <div className="space-y-1.5">
-              <label className="block text-xs text-slate-400">状态书引擎</label>
+              <label className="block text-xs text-slate-400 dark:text-slate-300">状态书引擎</label>
               <div className="flex items-center gap-1 bg-slate-900 rounded-lg p-0.5">
                 <button
                   onClick={() => dispatch({ type: 'SET_SCRIBE_ENGINE', engine: 'text' })}
@@ -256,7 +256,7 @@ export default function SettingsPanel() {
                   🎮 Galgame 数值
                 </button>
               </div>
-              <p className="text-[10px] text-slate-500">
+              <p className="text-[10px] text-slate-500 dark:text-slate-400">
                 {state.scribeEngine === 'text' && '传统文本状态书，AI 总结后以文本气泡展示'}
                 {state.scribeEngine === 'galgame' && '超低消耗数值引擎（每2轮），像素风卡片，非对称注入防AI谄媚'}
               </p>
@@ -265,13 +265,13 @@ export default function SettingsPanel() {
             {/* Galgame Prompt 编辑器 */}
             {state.scribeEngine === 'galgame' && (
               <div className="space-y-1">
-                <label className="text-[11px] text-slate-500">Galgame 引擎 Prompt（可自定义）:</label>
+                <label className="text-[11px] text-slate-500 dark:text-slate-400">Galgame 引擎 Prompt（可自定义）:</label>
                 <textarea
                   value={state.galgamePrompt}
                   onChange={(e) => dispatch({ type: 'SET_GALGAME_PROMPT', prompt: e.target.value })}
                   rows={6}
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-[10px] text-slate-200 
-                    placeholder-slate-500 resize-none focus:outline-none focus:border-purple-600/50 font-mono"
+ placeholder-slate-500 resize-none focus:outline-none focus:border-purple-600/50 font-mono"
                   placeholder="留空使用默认 Galgame 引擎 Prompt..."
                 />
               </div>
@@ -279,7 +279,7 @@ export default function SettingsPanel() {
 
             {/* 插入策略模式 */}
             <div className="space-y-1.5">
-              <label className="block text-xs text-slate-400">插入策略模式</label>
+              <label className="block text-xs text-slate-400 dark:text-slate-300">插入策略模式</label>
               <div className="flex items-center gap-1 bg-slate-900 rounded-lg p-0.5">
                 <button
                   onClick={() => dispatch({ type: 'SET_SCRIBE_MODE', mode: 'charA' })}
@@ -306,7 +306,7 @@ export default function SettingsPanel() {
                   自动（就近）
                 </button>
               </div>
-              <p className="text-[10px] text-slate-500">
+              <p className="text-[10px] text-slate-500 dark:text-slate-400">
                 {state.scribeMode === 'charA' && '状态书仅生成并绑定在角色A的回复气泡下'}
                 {state.scribeMode === 'charB' && '状态书仅生成并绑定在角色B的回复气泡下'}
                 {state.scribeMode === 'auto' && '触发时自动绑定到最新生成的 assistant 消息'}
@@ -314,7 +314,7 @@ export default function SettingsPanel() {
             </div>
 
             <div>
-              <label className="block text-xs text-slate-400 mb-1">
+              <label className="block text-xs text-slate-400 dark:text-slate-300 mb-1">
                 AI 总结触发间隔（每 N 轮）: {state.scribeTriggerInterval}
               </label>
               <input
@@ -337,11 +337,11 @@ export default function SettingsPanel() {
           <h4 className="text-xs font-semibold text-cyan-400 uppercase tracking-wider">
             🤝 互相认识 · 观察提示词
           </h4>
-          <span className="text-slate-500 text-xs">{observeOpen ? '▾' : '▸'}</span>
+          <span className="text-slate-500 dark:text-slate-400 text-xs">{observeOpen ? '▾' : '▸'}</span>
         </button>
         {observeOpen && (
           <div className="space-y-2">
-            <p className="text-[10px] text-slate-500 leading-relaxed">
+            <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-relaxed">
               点击"互相认识"按钮时，系统会用主AI分别观察对方角色卡，提取外部可观察特征，
               生成两条世界书条目互相插入。<code className="text-cyan-400 bg-slate-900 px-1 rounded">{'{charPrompt}'}</code> 会被替换为对方角色卡的 systemPrompt。
               留空则使用默认提示词。
@@ -351,7 +351,7 @@ export default function SettingsPanel() {
               onChange={(e) => dispatch({ type: 'SET_MUTUAL_OBSERVE_PROMPT', prompt: e.target.value })}
               rows={8}
               className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-[11px] text-slate-200
-                placeholder-slate-500 resize-none focus:outline-none focus:border-cyan-600/50 font-mono leading-relaxed"
+ placeholder-slate-500 resize-none focus:outline-none focus:border-cyan-600/50 font-mono leading-relaxed"
               placeholder={DEFAULT_MUTUAL_OBSERVE_PROMPT}
             />
             <div className="flex items-center gap-2">
@@ -376,8 +376,8 @@ export default function SettingsPanel() {
 
       {/* Data Management */}
       <div className="bg-slate-800/50 rounded-lg p-3 space-y-2 border border-slate-700/50">
-        <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">数据管理</h4>
-        <p className="text-xs text-slate-500">所有数据存储在浏览器 IndexedDB 中，不会上传到任何服务器。</p>
+        <h4 className="text-xs font-semibold text-slate-400 dark:text-slate-300 uppercase tracking-wider">数据管理</h4>
+        <p className="text-xs text-slate-500 dark:text-slate-400">所有数据存储在浏览器 IndexedDB 中，不会上传到任何服务器。</p>
         <div className="flex gap-2">
           <Button size="sm" variant="secondary" onClick={async () => {
             const stores = await import('../../db/stores');
@@ -430,10 +430,10 @@ export default function SettingsPanel() {
           <h4 className="text-xs font-semibold text-red-400 uppercase tracking-wider">
             ⚠️ 高级提示词设置
           </h4>
-          <span className="text-slate-500 text-xs">{advOpen ? '▾' : '▸'}</span>
+          <span className="text-slate-500 dark:text-slate-400 text-xs">{advOpen ? '▾' : '▸'}</span>
         </button>
         {!advOpen && (
-          <p className="text-[10px] text-slate-500">
+          <p className="text-[10px] text-slate-500 dark:text-slate-400">
             修改以下提示词模板可能会影响框架行为。点击展开查看和编辑所有预设提示词。
           </p>
         )}
@@ -463,21 +463,21 @@ export default function SettingsPanel() {
             ] as const).map((item) => (
               <div key={item.key} className="space-y-1">
                 <div className="flex items-center justify-between">
-                  <label className="text-[11px] text-slate-400 font-medium">{item.label}</label>
+                  <label className="text-[11px] text-slate-400 dark:text-slate-300 font-medium">{item.label}</label>
                   <button
                     onClick={() => dispatch({ type: 'SET_ADV_TPL', key: item.key, value: '' })}
-                    className="text-[10px] text-slate-500 hover:text-amber-400"
+                    className="text-[10px] text-slate-500 dark:text-slate-400 hover:text-amber-400"
                   >
                     恢复默认
                   </button>
                 </div>
-                <p className="text-[10px] text-slate-500 leading-relaxed">{item.desc}</p>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-relaxed">{item.desc}</p>
                 <textarea
                   value={(state as any)[item.key] as string}
                   onChange={(e) => dispatch({ type: 'SET_ADV_TPL', key: item.key, value: e.target.value })}
                   rows={item.rows}
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-[10px] text-slate-200
-                    placeholder-slate-500 resize-none focus:outline-none focus:border-red-600/50 font-mono leading-relaxed"
+ placeholder-slate-500 resize-none focus:outline-none focus:border-red-600/50 font-mono leading-relaxed"
                   placeholder={item.defaultVal}
                 />
               </div>
@@ -489,15 +489,15 @@ export default function SettingsPanel() {
       {/* Debug */}
       <div className="bg-slate-800/50 rounded-lg p-3 space-y-2 border border-slate-700/50">
         <h4 className="text-xs font-semibold text-red-400 uppercase tracking-wider">⚠️ 调试功能</h4>
-        <p className="text-[10px] text-slate-500">以下功能仅供开发调试使用，普通用户无需开启。</p>
+        <p className="text-[10px] text-slate-500 dark:text-slate-400">以下功能仅供开发调试使用，普通用户无需开启。</p>
         <div className="flex items-center justify-between">
-          <span className="text-xs text-slate-400">调试·原始提示词下载</span>
+          <span className="text-xs text-slate-400 dark:text-slate-300">调试·原始提示词下载</span>
           <Toggle
             checked={state.debugMode}
             onChange={() => dispatch({ type: 'TOGGLE_DEBUG' })}
           />
         </div>
-        <p className="text-[10px] text-slate-600">开启后，AI 回复气泡底部将出现「📄 导出原始 Prompt」按钮，可下载完整 messages 数组。</p>
+        <p className="text-[10px] text-slate-500 dark:text-slate-400">开启后，AI 回复气泡底部将出现「📄 导出原始 Prompt」按钮，可下载完整 messages 数组。</p>
       </div>
 
       {/* 使用声明与免责协议 */}
@@ -506,25 +506,25 @@ export default function SettingsPanel() {
           onClick={() => setAboutOpen(!aboutOpen)}
           className="flex items-center justify-between w-full"
         >
-          <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+          <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
             📜 使用声明与免责协议
           </h4>
-          <span className="text-slate-500 text-xs">{aboutOpen ? '▾' : '▸'}</span>
+          <span className="text-slate-500 dark:text-slate-400 text-xs">{aboutOpen ? '▾' : '▸'}</span>
         </button>
         {!aboutOpen && (
-          <p className="text-[10px] text-slate-500">
+          <p className="text-[10px] text-slate-500 dark:text-slate-400">
             点击展开查看完整使用声明、版权免责、第三方服务与 Token 消耗相关条款，以及作者捐赠通道。
           </p>
         )}
         {aboutOpen && (
           <div className="space-y-3 text-[11px] text-slate-300 leading-relaxed">
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-slate-400 dark:text-slate-300">
               本项目遵循以下原则开源，旨在为 AI 角色扮演爱好者提供一个自由、纯粹的工具：
             </p>
 
             <div className="space-y-2">
               <h5 className="text-[11px] font-semibold text-amber-400">【第一部分：开源分发与反篡改协议】</h5>
-              <ol className="list-decimal list-inside space-y-1.5 text-slate-400">
+              <ol className="list-decimal list-inside space-y-1.5 text-slate-400 dark:text-slate-300">
                 <li>
                   <span className="font-medium text-slate-300">免费派发原则</span>：在完整保留原作者署名信息、B站官方渠道说明、以及捐赠补给通道的前提下，任何人均可免费下载、体验本单文件程序。
                 </li>
@@ -533,7 +533,7 @@ export default function SettingsPanel() {
                 </li>
                 <li>
                   <span className="font-medium text-slate-300">渠道防伪与投毒免责</span>：本项目唯一正版官方发布渠道为 B 站{' '}
-                  <a href="https://space.bilibili.com/3119369" target="_blank" rel="noopener noreferrer" className="text-cyan-500 hover:text-cyan-300 underline">
+                  <a href="https://space.bilibili.com/3119369" target="_blank" rel="noopener noreferrer" className="text-cyan-600 dark:text-cyan-400 hover:text-cyan-500 dark:hover:text-cyan-300 underline">
                     橙橙乔乔
                   </a>
                   。任何由于用户从贴吧、网盘、Q群等第三方不明渠道下载导致的"文件遭恶意篡改"、"API Key 被盗刷"、"隐私泄露"或"设备中毒"等一切后果，均与官方作者无关，由使用者自行承担。
@@ -543,7 +543,7 @@ export default function SettingsPanel() {
 
             <div className="space-y-2">
               <h5 className="text-[11px] font-semibold text-amber-400">【第二部分：内容生成与版权熔断免责】</h5>
-              <ol className="list-decimal list-inside space-y-1.5 text-slate-400">
+              <ol className="list-decimal list-inside space-y-1.5 text-slate-400 dark:text-slate-300">
                 <li>
                   <span className="font-medium text-slate-300">纯工具属性</span>：本项目仅作为本地运行的前端工具框架，本身不提供任何 AI 大模型算力、不搭建中转服务器、不附带任何具有版权争议的第三方角色、图像、语音或 Live2D/3D 资产。
                 </li>
@@ -558,7 +558,7 @@ export default function SettingsPanel() {
 
             <div className="space-y-2">
               <h5 className="text-[11px] font-semibold text-amber-400">【第三部分：法律红线与行为锁死】</h5>
-              <ol className="list-decimal list-inside space-y-1.5 text-slate-400">
+              <ol className="list-decimal list-inside space-y-1.5 text-slate-400 dark:text-slate-300">
                 <li>
                   <span className="font-medium text-slate-300">守法红线</span>：用户在使用本文件调用商业或本地 AI 服务时，必须严格遵守所在地法律法规、大模型服务商的使用协议（ToS）及监管要求。
                 </li>
@@ -573,7 +573,7 @@ export default function SettingsPanel() {
 
             <div className="space-y-2">
               <h5 className="text-[11px] font-semibold text-amber-400">【第四部分：关于第三方 AI 服务与 Token 消耗的特别声明】</h5>
-              <ol className="list-decimal list-inside space-y-1.5 text-slate-400">
+              <ol className="list-decimal list-inside space-y-1.5 text-slate-400 dark:text-slate-300">
                 <li>
                   <span className="font-medium text-slate-300">品牌与商标归属</span>：本项目的文档、界面及示例中所提及的任何 AI 产品或服务名称（如 "DeepSeek" 等），仅作为功能示范与技术配置参考，绝不构成任何形式的商业广告、品牌推荐或利益背书。相关 AI 产品的版权、商标及所有权均归其对应的品牌方所有。
                 </li>
@@ -585,7 +585,7 @@ export default function SettingsPanel() {
                 </li>
                 <li>
                   <span className="font-medium text-slate-300">异常消耗与缺陷免责</span>：
-                  <ul className="list-disc list-inside ml-3 mt-1 space-y-1 text-slate-500">
+                  <ul className="list-disc list-inside ml-3 mt-1 space-y-1 text-slate-500 dark:text-slate-400">
                     <li>若出现因黑客攻击、服务商计费异常或非本项目官方代码导致的 Token 异常消耗，请使用者直接与您的 API 服务提供商联系核对。</li>
                     <li>鉴于大模型角色扮演（Roleplay）涉及复杂的上下文拼接、隔离包裹头算法及动态提示词（Prompt）注入，受限于不同模型的 Token 计算机制或代码本身可能存在的未知技术缺陷，若在体验过程中出现由于代码、提示词长度控制等技术缺陷导致的非预期或超量 Token 消耗，请使用者立即停用本项目。继续使用即代表您已知晓并自愿承担相关技术风险，一切损失与本项目及作者无关。</li>
                   </ul>
@@ -602,7 +602,7 @@ export default function SettingsPanel() {
             {/* 捐赠 */}
             <div className="pt-2 border-t border-slate-700/40">
               <h5 className="text-xs font-semibold text-slate-300 mb-1.5">☕ 请作者喝杯咖啡</h5>
-              <p className="text-[11px] text-slate-400 mb-3">
+              <p className="text-[11px] text-slate-400 dark:text-slate-300 mb-3">
                 如果你在使用中获得了乐趣，或觉得这个项目对你有帮助，欢迎通过下方二维码自由捐赠，支持继续开发与维护。
               </p>
               <div className="flex flex-col items-center gap-2 py-2">
@@ -612,7 +612,7 @@ export default function SettingsPanel() {
                   width="180"
                   className="rounded-lg border border-slate-700/50"
                 />
-                <p className="text-[10px] text-slate-500">支付宝扫码 · 自由捐赠，金额随意，心意最重要 ❤️</p>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400">支付宝扫码 · 自由捐赠，金额随意，心意最重要 ❤️</p>
               </div>
             </div>
           </div>
