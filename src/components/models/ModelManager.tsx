@@ -110,7 +110,7 @@ export default function ModelManager() {
   };
 
   const latencyLabel = (lat: number): { text: string; color: string } => {
-    if (lat === -1) return { text: '未测试', color: 'text-slate-500' };
+    if (lat === -1) return { text: '未测试', color: 'text-slate-700 dark:text-slate-300' };
     if (lat === -2) return { text: '超时', color: 'text-red-400' };
     if (lat === -3) return { text: 'Error/CORS', color: 'text-red-400' };
     return { text: `${lat} ms`, color: lat < 500 ? 'text-green-400' : lat < 1500 ? 'text-amber-400' : 'text-red-400' };
@@ -128,7 +128,7 @@ export default function ModelManager() {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-slate-300">模型通道</h3>
+        <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">模型通道</h3>
         <Button size="sm" onClick={openAdd}><Icon name="plus" size={14} /> 添加</Button>
       </div>
 
@@ -138,17 +138,17 @@ export default function ModelManager() {
         return (
           <div key={m.id} className="bg-slate-800/50 rounded-lg p-3 space-y-2 border border-slate-700/50">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-slate-200 truncate flex-1">{m.name}</span>
+              <span className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate flex-1">{m.name}</span>
               <div className="flex items-center gap-1">
-                <button onClick={() => openEdit(m.id)} className="text-slate-500 hover:text-slate-300 p-0.5"><Icon name="edit" size={14} /></button>
-                <button onClick={() => setDeleteConfirmId(m.id)} className="text-slate-500 hover:text-red-400 p-0.5"><Icon name="trash" size={14} /></button>
+                <button onClick={() => openEdit(m.id)} className="text-slate-700 dark:text-slate-300 hover:text-slate-300 dark:hover:text-slate-200 p-0.5"><Icon name="edit" size={14} /></button>
+                <button onClick={() => setDeleteConfirmId(m.id)} className="text-slate-700 dark:text-slate-300 hover:text-red-400 p-0.5"><Icon name="trash" size={14} /></button>
               </div>
             </div>
-            <div className="text-xs text-slate-500 truncate">{m.defaultModel} @ {m.baseUrl}</div>
-            <div className="flex items-center gap-3 text-[10px] text-slate-600">
+            <div className="text-xs text-slate-700 dark:text-slate-300 truncate">{m.defaultModel} @ {m.baseUrl}</div>
+            <div className="flex items-center gap-3 text-[10px] text-slate-700 dark:text-slate-300">
               <span>最大上下文: {(m.maxContextTokens || 4000).toLocaleString()} tokens</span>
               <span className={badge.color}>{badge.label}</span>
-              <span className="text-slate-600">T={(m.temperature ?? 0.8).toFixed(1)} P={(m.topP ?? 0.92).toFixed(2)}</span>
+              <span className="text-slate-700 dark:text-slate-300">T={(m.temperature ?? 0.8).toFixed(1)} P={(m.topP ?? 0.92).toFixed(2)}</span>
             </div>
             <div className="flex items-center gap-2">
               <Button size="sm" variant="secondary" onClick={() => pingModel(m.id)} loading={pinging[m.id]}>
@@ -171,36 +171,36 @@ export default function ModelManager() {
       })}
 
       {models.length === 0 && !loading && (
-        <div className="text-center py-6 text-slate-500 text-sm">暂无模型，点击"添加"配置 API 渠道</div>
+        <div className="text-center py-6 text-slate-700 dark:text-slate-300 text-sm">暂无模型，点击"添加"配置 API 渠道</div>
       )}
 
       <Modal open={showModal} onClose={() => setShowModal(false)} title={editingId ? '编辑模型' : '添加模型'}>
         <div className="space-y-3">
           <div>
-            <label className="block text-xs text-slate-400 mb-1">自定义模型名称</label>
+            <label className="block text-xs text-slate-900 dark:text-slate-100 mb-1">自定义模型名称</label>
             <input className="input-field" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="例如 DeepSeek V3" />
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1">Base URL</label>
+            <label className="block text-xs text-slate-900 dark:text-slate-100 mb-1">Base URL</label>
             <input className="input-field" value={form.baseUrl} onChange={(e) => setForm({ ...form, baseUrl: e.target.value })} placeholder="https://api.deepseek.com" />
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1">API Key</label>
+            <label className="block text-xs text-slate-900 dark:text-slate-100 mb-1">API Key</label>
             <input className="input-field" type="password" value={form.apiKey} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} placeholder="sk-..." />
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1">API 模型名</label>
+            <label className="block text-xs text-slate-900 dark:text-slate-100 mb-1">API 模型名</label>
             <input className="input-field" value={form.defaultModel} onChange={(e) => setForm({ ...form, defaultModel: e.target.value })} placeholder="deepseek-chat" />
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1">最大上下文 Token 数</label>
+            <label className="block text-xs text-slate-900 dark:text-slate-100 mb-1">最大上下文 Token 数</label>
             <input className="input-field" type="number" value={form.maxContextTokens} onChange={(e) => setForm({ ...form, maxContextTokens: Math.max(1000, parseInt(e.target.value) || 4000) })} placeholder="4000" />
-            <p className="text-[10px] text-slate-500 mt-1">用于上下文截断，不同模型填不同值（如 GPT-4o=128000, DeepSeek=64000, 本地 7B=4096）</p>
+            <p className="text-[10px] text-slate-700 dark:text-slate-300 mt-1">用于上下文截断，不同模型填不同值（如 GPT-4o=128000, DeepSeek=64000, 本地 7B=4096）</p>
           </div>
 
           {/* ===== 采样参数预设 ===== */}
           <div className="border-t border-slate-700/50 pt-3">
-            <label className="block text-xs text-slate-400 mb-2">采样参数预设</label>
+            <label className="block text-xs text-slate-900 dark:text-slate-100 mb-2">采样参数预设</label>
             <div className="grid grid-cols-3 gap-2">
               {PRESETS.map((p) => {
                 const active = matchedPreset() === p.key;
@@ -212,23 +212,23 @@ export default function ModelManager() {
                     className={`text-xs rounded-lg px-2 py-2 border transition-colors text-center
                       ${active
                         ? 'bg-amber-600/20 border-amber-500 text-amber-300'
-                        : 'bg-slate-800/50 border-slate-700/50 text-slate-400 hover:border-slate-600 hover:text-slate-200'
+                        : 'bg-slate-800/50 border-slate-700/50 text-slate-900 dark:text-slate-100 hover:border-amber-500/50 hover:text-slate-700 dark:hover:text-slate-300'
                       }`}
                   >
                     <div className="font-medium">{p.label}</div>
-                    <div className="text-[10px] text-slate-500 mt-0.5">T={p.temperature} · P={p.topP}</div>
+                    <div className="text-[10px] text-slate-700 dark:text-slate-300 mt-0.5">T={p.temperature} · P={p.topP}</div>
                   </button>
                 );
               })}
             </div>
-            <p className="text-[10px] text-slate-500 mt-1.5">
+            <p className="text-[10px] text-slate-700 dark:text-slate-300 mt-1.5">
               {PRESETS.find((p) => p.key === matchedPreset())?.desc ||
                 '已自定义参数，不在预设范围内'}
             </p>
 
             <div className="grid grid-cols-2 gap-2 mt-2">
               <div>
-                <label className="block text-[10px] text-slate-500 mb-0.5">Temperature (0-2)</label>
+                <label className="block text-[10px] text-slate-700 dark:text-slate-300 mb-0.5">Temperature (0-2)</label>
                 <input
                   className="input-field"
                   type="number"
@@ -240,7 +240,7 @@ export default function ModelManager() {
                 />
               </div>
               <div>
-                <label className="block text-[10px] text-slate-500 mb-0.5">Top-P (0-1)</label>
+                <label className="block text-[10px] text-slate-700 dark:text-slate-300 mb-0.5">Top-P (0-1)</label>
                 <input
                   className="input-field"
                   type="number"
@@ -263,7 +263,7 @@ export default function ModelManager() {
 
       {/* 删除确认弹窗 */}
       <Modal open={!!deleteConfirmId} onClose={() => setDeleteConfirmId(null)} title="删除模型">
-        <p className="text-sm text-slate-300 mb-4">
+        <p className="text-sm text-slate-900 dark:text-slate-100 mb-4">
           确定要删除模型「{models.find((m) => m.id === deleteConfirmId)?.name || ''}」吗？此操作不可撤销。
         </p>
         <div className="flex justify-end gap-2">
