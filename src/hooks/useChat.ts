@@ -25,6 +25,7 @@ import {
 } from '../utils/galgameEngine';
 
 /** SSE 流式读取空闲超时：若服务端在 30s 内未发送任何新 chunk，视为已僵死并自动断开 */
+import { chatCompletionsUrl } from '../utils/chatCompletionsUrl';
 const STREAM_IDLE_TIMEOUT_MS = 30_000;
 
 export interface UseChatDeps {
@@ -122,7 +123,7 @@ export function useChat(deps: UseChatDeps) {
           { role: 'user' as const, content: dialogueText },
         ];
 
-        const resp = await fetch(`${model.baseUrl}/v1/chat/completions`, {
+        const resp = await fetch(`${chatCompletionsUrl(model.baseUrl)}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -237,7 +238,7 @@ export function useChat(deps: UseChatDeps) {
         console.log('[Galgame] 发送请求, model=%s, dialogueLength=%d, historyStates=%d, hasCharPrompt=%s',
           model.defaultModel, dialogueText.length, recentStates.length, !!character?.systemPrompt?.trim());
 
-        const resp = await fetch(`${model.baseUrl}/v1/chat/completions`, {
+        const resp = await fetch(`${chatCompletionsUrl(model.baseUrl)}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -443,7 +444,7 @@ export function useChat(deps: UseChatDeps) {
         // 调试用：保存本次发送的完整 messages
         setLastPrompt(assembled.messages.map((m) => ({ role: m.role, content: m.content })));
 
-        const resp = await fetch(`${model.baseUrl}/v1/chat/completions`, {
+        const resp = await fetch(`${chatCompletionsUrl(model.baseUrl)}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -677,7 +678,7 @@ export function useChat(deps: UseChatDeps) {
       const abort = new AbortController();
       abortRef.current = abort;
 
-      const resp = await fetch(`${model.baseUrl}/v1/chat/completions`, {
+      const resp = await fetch(`${chatCompletionsUrl(model.baseUrl)}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

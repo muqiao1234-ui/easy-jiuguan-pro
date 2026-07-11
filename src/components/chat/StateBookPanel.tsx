@@ -15,6 +15,7 @@ import Toggle from '../ui/Toggle';
 import Dropdown from '../ui/Dropdown';
 import Icon from '../ui/Icon';
 
+import { chatCompletionsUrl } from '../../utils/chatCompletionsUrl';
 interface StateBookPanelProps {
   conversationId: string | null;
   conversationTitle: string;
@@ -116,7 +117,7 @@ export default function StateBookPanel({
         // 最后追加本次要推断的 2 轮对话
         messages.push({ role: 'user', content: dialogueText });
 
-        const resp = await fetch(`${model.baseUrl}/v1/chat/completions`, {
+        const resp = await fetch(`${chatCompletionsUrl(model.baseUrl)}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -152,7 +153,7 @@ export default function StateBookPanel({
           { role: 'user' as const, content: dialogueText },
         ];
 
-        const resp = await fetch(`${model.baseUrl}/v1/chat/completions`, {
+        const resp = await fetch(`${chatCompletionsUrl(model.baseUrl)}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

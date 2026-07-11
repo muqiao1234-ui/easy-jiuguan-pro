@@ -16,6 +16,7 @@ import CharacterSelector from '../characters/CharacterSelector';
 import Modal from '../ui/Modal';
 import Button from '../ui/Button';
 
+import { chatCompletionsUrl } from '../../utils/chatCompletionsUrl';
 interface ChatAreaProps {
   characterA: Character | null;
   characterB: Character | null;
@@ -326,7 +327,7 @@ export default function ChatArea({
 
       // 并发发起两个观察请求
       const [obsB_forA, obsA_forB] = await Promise.all([
-        fetch(`${model.baseUrl}/v1/chat/completions`, {
+        fetch(`${chatCompletionsUrl(model.baseUrl)}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${model.apiKey}` },
           body: JSON.stringify({
@@ -345,7 +346,7 @@ export default function ChatArea({
            || ''
           ).trim()
         ),
-        fetch(`${model.baseUrl}/v1/chat/completions`, {
+        fetch(`${chatCompletionsUrl(model.baseUrl)}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${model.apiKey}` },
           body: JSON.stringify({
