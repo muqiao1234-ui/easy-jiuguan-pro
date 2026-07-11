@@ -162,7 +162,7 @@ export default function SettingsPanel() {
           <div className="min-w-0">
             <span className="text-xs text-slate-900 dark:text-slate-100">🐢 低速率模式</span>
             <p className="text-[10px] text-slate-700 dark:text-slate-300 leading-snug">
-              针对有请求速率限制的模型（如 <strong>GLM-4-Flash</strong>、豆包等）请打开此开关，避免 429 错误。开启后同源请求间隔 ≥ 1.5 秒，DeepSeek/OpenAI 等不限速模型无需开启。
+              针对有请求速率限制的模型（如 <strong>GLM-4.7-Flash</strong>、GLM-4-Flash、豆包等）请打开此开关，避免 429 错误。开启后同源请求会排队串行，且请求开始间隔 ≥ 2.5 秒，DeepSeek/OpenAI 等不限速模型无需开启。
             </p>
           </div>
           <Toggle
@@ -171,7 +171,7 @@ export default function SettingsPanel() {
           />
         </div>
         <p className="text-[10px] text-slate-700 dark:text-slate-300">
-          ℹ️ 429 自动重试始终生效（无论是否开启），收到 429 后自动等待 Retry-After 并重试 1 次。
+          ℹ️ 429 自动重试始终生效（无论是否开启），收到 429 后自动等待 Retry-After；若服务商未返回该头，则按 3s → 6s → 12s 重试 3 次。
         </p>
       </div>
 
