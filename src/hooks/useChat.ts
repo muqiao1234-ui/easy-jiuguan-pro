@@ -258,14 +258,24 @@ export function useChat(deps: UseChatDeps) {
 
         const data = await resp.json();
         // 兼容多种返回格式：标准 OpenAI content / DeepSeek reasoning_content / 直接 text
-        const rawContent =
-          data.choices?.[0]?.message?.content ||
-          data.choices?.[0]?.message?.reasoning_content ||
-          data.choices?.[0]?.text ||
-          '';
+        // 优先使用 content；若 content 为空（如 GLM-4.7-Flash 思维链模型 finish_reason=length
+        // 导致 content 未生成），则尝试从 reasoning_content 中提取 JSON 作为兜底
+        const content = data.choices?.[0]?.message?.content || '';
+        const reasoning = data.choices?.[0]?.message?.reasoning_content || '';
+        const finishReason = data.choices?.[0]?.finish_reason || '';
+        const rawContent = content || reasoning || data.choices?.[0]?.text || '';
         console.log('[Galgame] 完整响应: %s', JSON.stringify(data).slice(0, 500));
+        console.log('[Galgame] finish_reason=%s, content.len=%d, reasoning.len=%d, rawContent.len=%d',
+          finishReason, content.length, reasoning.length, rawContent.length);
         console.log('[Galgame] 原始返回: %s', rawContent.slice(0, 300));
-        const galgameData = parseGalgameResponse(rawContent, charName);
+        let galgameData = parseGalgameResponse(rawContent, charName);
+
+        // 如果 content 为空且 reasoning_content 有值但解析失败，
+        // 尝试从 reasoning_content 中提取最后一个 JSON 对象（模型可能在推理末尾输出了结果）
+        if (!galgameData && !content && reasoning) {
+          console.warn('[Galgame] content 为空，尝试从 reasoning_content 提取 JSON');
+          galgameData = parseGalgameResponse(reasoning, charName);
+        }
 
         if (galgameData) {
           // 确保 name 使用实际角色名

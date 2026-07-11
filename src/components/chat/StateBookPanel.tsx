@@ -134,8 +134,14 @@ export default function StateBookPanel({
         });
         if (!resp.ok) return;
         const data = await resp.json();
-        const rawContent = data.choices?.[0]?.message?.content || '';
-        const galgameData = parseGalgameResponse(rawContent, charName);
+        // 兼容思维链模型：content 为空时从 reasoning_content 提取 JSON
+        const content = data.choices?.[0]?.message?.content || '';
+        const reasoning = data.choices?.[0]?.message?.reasoning_content || '';
+        const rawContent = content || reasoning || data.choices?.[0]?.text || '';
+        let galgameData = parseGalgameResponse(rawContent, charName);
+        if (!galgameData && !content && reasoning) {
+          galgameData = parseGalgameResponse(reasoning, charName);
+        }
         if (galgameData) {
           await Stores.updateMessageNode(latestAssistant.id, { galgameData });
         }
