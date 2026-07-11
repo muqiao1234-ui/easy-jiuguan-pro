@@ -19,11 +19,11 @@ import { chatCompletionsUrl } from './chatCompletionsUrl';
 /** 同一 baseUrl 的最小请求间隔（毫秒）。1.5 秒适配智谱 1 QPS 限制 + 缓冲。 */
 const MIN_INTERVAL_MS = 1500;
 
-/** 429 重试最大次数 */
-const MAX_RETRIES = 1;
+/** 429 重试最大次数（指数退避：3s → 6s → 12s） */
+const MAX_RETRIES = 3;
 
-/** 429 默认等待时间（毫秒），当响应无 Retry-After 头时使用 */
-const DEFAULT_RETRY_AFTER_MS = 2000;
+/** 429 默认初始等待时间（毫秒），当响应无 Retry-After 头时使用 */
+const DEFAULT_RETRY_AFTER_MS = 3000;
 
 /** 每个 baseUrl 的上次请求时间戳 */
 const lastRequestTime = new Map<string, number>();
@@ -84,19 +84,22 @@ export async function apiFetch(
 
     if (resp.status !== 429) return resp;
 
-    // 429：读取 Retry-After，等待后重试
+    // 429：指数退避重试
     if (attempt < MAX_RETRIES) {
-      const retryAfter = parseRetryAfter(resp.headers.get('retry-after'));
+      // 优先读 Retry-After 头；无则指数退避 3s → 6s → 12s
+      const headerRetry = parseRetryAfter(resp.headers.get('retry-after'));
+      const backoff = DEFAULT_RETRY_AFTER_MS * Math.pow(2, attempt);
+      const waitMs = headerRetry > 0 ? headerRetry : backoff;
       console.warn(
-        `[apiFetch] 429 速率限制，${retryAfter}ms 后重试 (baseUrl=${baseUrl}, attempt=${attempt + 1}/${MAX_RETRIES})`,
+        `[apiFetch] 429 速率限制，${Math.round(waitMs / 1000)}s 后重试 (baseUrl=${baseUrl}, attempt=${attempt + 1}/${MAX_RETRIES})`,
       );
       try { await resp.text(); } catch { /* ignore */ }
-      await new Promise((resolve) => setTimeout(resolve, retryAfter));
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
       lastRequestTime.set(baseUrl, 0);
       continue;
     }
 
-    console.warn(`[apiFetch] 429 重试已用尽，返回错误响应 (baseUrl=${baseUrl})`);
+    console.warn(`[apiFetch] 429 重试已用尽（${MAX_RETRIES}次），返回错误响应 (baseUrl=${baseUrl})`);
     return resp;
   }
 
