@@ -3,7 +3,7 @@ import type { MessageNode, ModelConfig, DistillationResult } from '../types';
 import { generateId } from '../utils/id';
 import { DEFAULT_DISTILLATION_PROMPT, DEFAULT_TPL_DISTILLED_NODE_PREFIX } from '../utils/constants';
 
-import { chatCompletionsUrl } from '../utils/chatCompletionsUrl';
+import { apiFetch } from '../utils/apiFetch';
 interface PerformParams {
   nodes: MessageNode[];
   distillModelId: string;
@@ -43,7 +43,7 @@ export function useDistillation() {
         dialogueText
       );
 
-      const resp = await fetch(`${chatCompletionsUrl(model.baseUrl)}`, {
+      const resp = await apiFetch(model.baseUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

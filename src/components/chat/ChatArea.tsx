@@ -16,7 +16,7 @@ import CharacterSelector from '../characters/CharacterSelector';
 import Modal from '../ui/Modal';
 import Button from '../ui/Button';
 
-import { chatCompletionsUrl } from '../../utils/chatCompletionsUrl';
+import { apiFetch } from '../../utils/apiFetch';
 interface ChatAreaProps {
   characterA: Character | null;
   characterB: Character | null;
@@ -326,7 +326,7 @@ export default function ChatArea({
         observeTemplate.replace('{charPrompt}', charPrompt);
 
       // 串行发起两个观察请求（智谱等限速严格的 API 会因并发 429）
-      const obsB_forA = await fetch(`${chatCompletionsUrl(model.baseUrl)}`, {
+      const obsB_forA = await apiFetch(model.baseUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${model.apiKey}` },
         body: JSON.stringify({
@@ -345,7 +345,7 @@ export default function ChatArea({
          || ''
         ).trim()
       );
-      const obsA_forB = await fetch(`${chatCompletionsUrl(model.baseUrl)}`, {
+      const obsA_forB = await apiFetch(model.baseUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${model.apiKey}` },
         body: JSON.stringify({

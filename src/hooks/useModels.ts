@@ -3,7 +3,7 @@ import type { ModelConfig } from '../types';
 import * as Stores from '../db/stores';
 import { generateId } from '../utils/id';
 
-import { chatCompletionsUrl } from '../utils/chatCompletionsUrl';
+import { apiFetch } from '../utils/apiFetch';
 export function useModels() {
   const [models, setModels] = useState<ModelConfig[]>([]);
   const [loading, setLoading] = useState(false);
@@ -62,7 +62,7 @@ export function useModels() {
       const t1 = Date.now();
       let latency: number;
       try {
-        const resp = await fetch(`${chatCompletionsUrl(model.baseUrl)}`, {
+        const resp = await apiFetch(model.baseUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
