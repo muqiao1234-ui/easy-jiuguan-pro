@@ -325,47 +325,45 @@ export default function ChatArea({
       const OBSERVE_PROMPT = (charPrompt: string) =>
         observeTemplate.replace('{charPrompt}', charPrompt);
 
-      // 并发发起两个观察请求
-      const [obsB_forA, obsA_forB] = await Promise.all([
-        fetch(`${chatCompletionsUrl(model.baseUrl)}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${model.apiKey}` },
-          body: JSON.stringify({
-            model: model.defaultModel,
-            messages: [{ role: 'user', content: OBSERVE_PROMPT(characterB.systemPrompt) }],
-            stream: false, temperature: 0.3, max_tokens: 200,
-          }),
-        }).then(async r => {
-          const data = await r.json();
-          if (!r.ok) throw new Error(`API ${r.status}: ${JSON.stringify(data).slice(0, 200)}`);
-          return data;
-        }).then(d =>
-          (d.choices?.[0]?.message?.content
-           || d.choices?.[0]?.message?.reasoning_content
-           || d.choices?.[0]?.text
-           || ''
-          ).trim()
-        ),
-        fetch(`${chatCompletionsUrl(model.baseUrl)}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${model.apiKey}` },
-          body: JSON.stringify({
-            model: model.defaultModel,
-            messages: [{ role: 'user', content: OBSERVE_PROMPT(characterA.systemPrompt) }],
-            stream: false, temperature: 0.3, max_tokens: 200,
-          }),
-        }).then(async r => {
-          const data = await r.json();
-          if (!r.ok) throw new Error(`API ${r.status}: ${JSON.stringify(data).slice(0, 200)}`);
-          return data;
-        }).then(d =>
-          (d.choices?.[0]?.message?.content
-           || d.choices?.[0]?.message?.reasoning_content
-           || d.choices?.[0]?.text
-           || ''
-          ).trim()
-        ),
-      ]);
+      // 串行发起两个观察请求（智谱等限速严格的 API 会因并发 429）
+      const obsB_forA = await fetch(`${chatCompletionsUrl(model.baseUrl)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${model.apiKey}` },
+        body: JSON.stringify({
+          model: model.defaultModel,
+          messages: [{ role: 'user', content: OBSERVE_PROMPT(characterB.systemPrompt) }],
+          stream: false, temperature: 0.3, max_tokens: 200,
+        }),
+      }).then(async r => {
+        const data = await r.json();
+        if (!r.ok) throw new Error(`API ${r.status}: ${JSON.stringify(data).slice(0, 200)}`);
+        return data;
+      }).then(d =>
+        (d.choices?.[0]?.message?.content
+         || d.choices?.[0]?.message?.reasoning_content
+         || d.choices?.[0]?.text
+         || ''
+        ).trim()
+      );
+      const obsA_forB = await fetch(`${chatCompletionsUrl(model.baseUrl)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${model.apiKey}` },
+        body: JSON.stringify({
+          model: model.defaultModel,
+          messages: [{ role: 'user', content: OBSERVE_PROMPT(characterA.systemPrompt) }],
+          stream: false, temperature: 0.3, max_tokens: 200,
+        }),
+      }).then(async r => {
+        const data = await r.json();
+        if (!r.ok) throw new Error(`API ${r.status}: ${JSON.stringify(data).slice(0, 200)}`);
+        return data;
+      }).then(d =>
+        (d.choices?.[0]?.message?.content
+         || d.choices?.[0]?.message?.reasoning_content
+         || d.choices?.[0]?.text
+         || ''
+        ).trim()
+      );
 
       // 后处理：剥离 AI 可能在描述前输出的推理/分析文字
       const cleanObservation = (raw: string) => {

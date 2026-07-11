@@ -513,64 +513,60 @@ export function useChat(deps: UseChatDeps) {
         const updatedNodes = await deps.getNodesByConversation(deps.conversationId);
         deps.onNodesRefresh(updatedNodes);
 
-        // 第三书记员：根据 scribeEngine + scribeMode 判断是否触发
-        if (deps.scribeEnabled && deps.scribeModelId) {
-          const nonSystemNodes = updatedNodes.filter(
-            (n) => n.role !== 'system' && n.role !== 'distilled' && n.role !== 'scribe' && !n.isArchived
-          );
-          const aiRole = target.type === 'charB_eavesdrop' ? 'charB' : target.type;
-          // 以目标角色的 assistant 消息数作为轮数
-          const assistantCount = nonSystemNodes.filter((n) => n.role === aiRole).length;
-          const triggerInterval = deps.scribeEngine === 'galgame'
-            ? GALGAME_TRIGGER_INTERVAL
-            : deps.scribeTriggerInterval;
-          const shouldTrigger = triggerInterval > 0 && assistantCount > 0 && assistantCount % triggerInterval === 0;
+        // 第三书记员 + 自动蒸馏：串行触发，避免对限速严格的 API（如智谱）触发 429
+        // 注意：原本是 fire-and-forget 并发，现在改为单个 async chain 串行
+        // — 先 Galgame/scribe，完成后再蒸馏。仍不阻塞主流程返回。
+        (async () => {
+          // 1. Galgame / 文本状态书
+          if (deps.scribeEnabled && deps.scribeModelId) {
+            const nonSystemNodes = updatedNodes.filter(
+              (n) => n.role !== 'system' && n.role !== 'distilled' && n.role !== 'scribe' && !n.isArchived
+            );
+            const aiRole = target.type === 'charB_eavesdrop' ? 'charB' : target.type;
+            const assistantCount = nonSystemNodes.filter((n) => n.role === aiRole).length;
+            const triggerInterval = deps.scribeEngine === 'galgame'
+              ? GALGAME_TRIGGER_INTERVAL
+              : deps.scribeTriggerInterval;
+            const shouldTrigger = triggerInterval > 0 && assistantCount > 0 && assistantCount % triggerInterval === 0;
 
-          console.log('[状态书] engine=%s mode=%s assistantCount=%d interval=%d shouldTrigger=%s scribeModelId=%s',
-            deps.scribeEngine, deps.scribeMode, assistantCount, triggerInterval, shouldTrigger, deps.scribeModelId);
+            console.log('[状态书] engine=%s mode=%s assistantCount=%d interval=%d shouldTrigger=%s scribeModelId=%s',
+              deps.scribeEngine, deps.scribeMode, assistantCount, triggerInterval, shouldTrigger, deps.scribeModelId);
 
-          if (shouldTrigger) {
-            let shouldRun = false;
+            if (shouldTrigger) {
+              let shouldRun = false;
+              if (deps.scribeMode === 'charA' && aiRole === 'charA') shouldRun = true;
+              else if (deps.scribeMode === 'charB' && aiRole === 'charB') shouldRun = true;
+              else if (deps.scribeMode === 'auto') shouldRun = true;
 
-            if (deps.scribeMode === 'charA' && aiRole === 'charA') {
-              shouldRun = true;
-            } else if (deps.scribeMode === 'charB' && aiRole === 'charB') {
-              shouldRun = true;
-            } else if (deps.scribeMode === 'auto') {
-              shouldRun = true;
-            }
-
-            if (shouldRun) {
-              if (deps.scribeEngine === 'galgame') {
-                // Galgame 数值引擎
-                console.log('[Galgame] 触发数值引擎, aiNode=%s, charName=%s', aiNode.id, character.name);
-                triggerGalgameEngine(
-                  nonSystemNodes.slice(-deps.recentRounds),
-                  aiNode.id,
-                  character.name,
-                  character
-                ).catch(console.error);
-              } else {
-                // 传统文本状态书
-                triggerScribeSummary(
-                  nonSystemNodes.slice(-deps.recentRounds),
-                  aiNode.id,
-                  deps.scribeMode
-                ).catch(console.error);
+              if (shouldRun) {
+                if (deps.scribeEngine === 'galgame') {
+                  console.log('[Galgame] 触发数值引擎, aiNode=%s, charName=%s', aiNode.id, character.name);
+                  await triggerGalgameEngine(
+                    nonSystemNodes.slice(-deps.recentRounds),
+                    aiNode.id,
+                    character.name,
+                    character
+                  );
+                } else {
+                  await triggerScribeSummary(
+                    nonSystemNodes.slice(-deps.recentRounds),
+                    aiNode.id,
+                    deps.scribeMode
+                  );
+                }
               }
             }
+          } else {
+            console.log('[状态书] 跳过: scribeEnabled=%s scribeModelId=%s', deps.scribeEnabled, deps.scribeModelId);
           }
-        } else {
-          console.log('[状态书] 跳过: scribeEnabled=%s scribeModelId=%s', deps.scribeEnabled, deps.scribeModelId);
-        }
 
-        if (deps.autoTriggerDistillation && deps.distillModelId) {
-          const newUnarchived = updatedNodes.filter(
-            (n) => !n.isArchived && n.role !== 'distilled' && n.role !== 'system' && n.role !== 'scribe'
-          );
-          if (newUnarchived.length >= deps.triggerThreshold) {
-            deps
-              .performDistillation({
+          // 2. 自动蒸馏（Galgame/scribe 完成后再触发，避免并发）
+          if (deps.autoTriggerDistillation && deps.distillModelId) {
+            const newUnarchived = updatedNodes.filter(
+              (n) => !n.isArchived && n.role !== 'distilled' && n.role !== 'system' && n.role !== 'scribe'
+            );
+            if (newUnarchived.length >= deps.triggerThreshold) {
+              await deps.performDistillation({
                 nodes: newUnarchived,
                 distillModelId: deps.distillModelId,
                 distillationPrompt: deps.distillationPrompt,
@@ -578,10 +574,10 @@ export function useChat(deps: UseChatDeps) {
                 getModelById: deps.getModelById,
                 addMessageNode: deps.addMessageNode,
                 batchUpdateNodes: deps.batchUpdateNodes,
-              })
-              .catch(console.error);
+              });
+            }
           }
-        }
+        })().catch(console.error);
       } catch (e: any) {
         if (e.name === 'AbortError') {
           if (fullContent.trim()) {
@@ -739,7 +735,7 @@ export function useChat(deps: UseChatDeps) {
       const updatedNodes = await deps.getNodesByConversation(deps.conversationId);
       deps.onNodesRefresh(updatedNodes);
 
-      // 旁听也触发状态书（如果模式匹配）
+      // 旁听也触发状态书（如果模式匹配）— 串行触发避免限速 API 429
       if (deps.scribeEnabled && deps.scribeModelId) {
         const nonSystemNodes = updatedNodes.filter(
           (n) => n.role !== 'system' && n.role !== 'distilled' && n.role !== 'scribe' && !n.isArchived
@@ -752,18 +748,18 @@ export function useChat(deps: UseChatDeps) {
         if (triggerInterval > 0 && assistantCount > 0 && assistantCount % triggerInterval === 0) {
           if (deps.scribeMode === 'charB' || deps.scribeMode === 'auto') {
             if (deps.scribeEngine === 'galgame') {
-              triggerGalgameEngine(
+              await triggerGalgameEngine(
                 nonSystemNodes.slice(-deps.recentRounds),
                 node.id,
                 deps.characterB!.name,
                 deps.characterB
-              ).catch(console.error);
+              );
             } else {
-              triggerScribeSummary(
+              await triggerScribeSummary(
                 nonSystemNodes.slice(-deps.recentRounds),
                 node.id,
                 deps.scribeMode
-              ).catch(console.error);
+              );
             }
           }
         }
