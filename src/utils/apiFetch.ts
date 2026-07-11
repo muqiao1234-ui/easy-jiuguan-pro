@@ -2,15 +2,16 @@
  * 带节流 + 429 自动重试的 API 请求函数。
  *
  * 解决问题：
- * 1. 智谱 BigModel (glm-4-flash) 等限速严格的 API，即使串行触发也会因
+ * 1. 智谱 BigModel (GLM-4-Flash) 等限速严格的 API，即使串行触发也会因
  *    两次请求间隔过短（< 1 秒）而触发 429 "速率限制"。
  * 2. 主对话流式回复完成后，Galgame/scribe/蒸馏等后续触发紧跟着发出，
  *    实际请求间隔可能只有几百毫秒。
  *
  * 策略：
- * - 按 baseUrl 维度维护"上次请求时间戳"，确保同源请求间隔 ≥ MIN_INTERVAL_MS
- * - 收到 429 时，读取 Retry-After 头（或默认等待 2 秒），自动重试一次
- * - 节流和重试对调用方透明，用法同原生 fetch
+ * - 当「低速率模式」开启时，按 baseUrl 维度节流，同源请求间隔 ≥ MIN_INTERVAL_MS
+ * - 收到 429 时，读取 Retry-After 头（或默认等待 2 秒），自动重试一次（无论开关）
+ * - 低速率模式默认关闭（DeepSeek/OpenAI 等不限速 API 无需节流），
+ *   用户在设置页手动开启
  */
 
 import { chatCompletionsUrl } from './chatCompletionsUrl';
@@ -27,8 +28,17 @@ const DEFAULT_RETRY_AFTER_MS = 2000;
 /** 每个 baseUrl 的上次请求时间戳 */
 const lastRequestTime = new Map<string, number>();
 
-/** 节流等待：确保距上次同源请求至少 MIN_INTERVAL_MS */
+/** 低速率模式开关（由 useApp 通过 setLowRateMode 注入） */
+let lowRateModeEnabled = false;
+
+/** 外部设置低速率模式开关 */
+export function setLowRateMode(enabled: boolean): void {
+  lowRateModeEnabled = enabled;
+}
+
+/** 节流等待：确保距上次同源请求至少 MIN_INTERVAL_MS（仅在低速率模式开启时生效） */
 async function throttle(baseUrl: string): Promise<void> {
+  if (!lowRateModeEnabled) return;
   const now = Date.now();
   const last = lastRequestTime.get(baseUrl) || 0;
   const elapsed = now - last;
@@ -42,10 +52,8 @@ async function throttle(baseUrl: string): Promise<void> {
 /** 解析 Retry-After 头（支持秒数或 HTTP 日期） */
 function parseRetryAfter(header: string | null): number {
   if (!header) return DEFAULT_RETRY_AFTER_MS;
-  // 纯数字 = 秒
   const seconds = parseInt(header, 10);
   if (!isNaN(seconds)) return seconds * 1000;
-  // HTTP 日期
   const date = new Date(header).getTime();
   if (!isNaN(date)) return Math.max(0, date - Date.now());
   return DEFAULT_RETRY_AFTER_MS;
@@ -54,16 +62,13 @@ function parseRetryAfter(header: string | null): number {
 /**
  * 带节流 + 429 重试的 API fetch。
  *
- * 用法（替换原 fetch + chatCompletionsUrl 两步操作）：
+ * - 低速率模式开启时：请求前节流 1.5s + 429 自动重试
+ * - 低速率模式关闭时：仅 429 自动重试（不节流）
+ *
+ * 用法：
  * ```ts
- * // 原来：
- * fetch(`${chatCompletionsUrl(model.baseUrl)}`, { method: 'POST', ... })
- *
- * // 现在：
- * apiFetch(model.baseUrl, { method: 'POST', ... })
+ * apiFetch(model.baseUrl, { method: 'POST', headers, body })
  * ```
- *
- * 内部自动：1) 转换 URL  2) 节流等待  3) 发请求  4) 429 时重试
  */
 export async function apiFetch(
   baseUrl: string,
@@ -72,34 +77,28 @@ export async function apiFetch(
   const url = chatCompletionsUrl(baseUrl);
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    // 节流：确保同源请求间隔
+    // 节流：仅在低速率模式开启时生效
     await throttle(baseUrl);
 
     const resp = await fetch(url, init);
 
-    // 非 429 直接返回
     if (resp.status !== 429) return resp;
 
-    // 429：读取 Retry-After，等待后重试（仅重试一次）
+    // 429：读取 Retry-After，等待后重试
     if (attempt < MAX_RETRIES) {
       const retryAfter = parseRetryAfter(resp.headers.get('retry-after'));
       console.warn(
         `[apiFetch] 429 速率限制，${retryAfter}ms 后重试 (baseUrl=${baseUrl}, attempt=${attempt + 1}/${MAX_RETRIES})`,
       );
-      // 丢弃响应体
       try { await resp.text(); } catch { /* ignore */ }
-      // 等待后重试
       await new Promise((resolve) => setTimeout(resolve, retryAfter));
-      // 重试前重置节流时间戳（因为已经等了 retryAfter）
       lastRequestTime.set(baseUrl, 0);
       continue;
     }
 
-    // 重试次数用尽，返回 429 响应让调用方处理
     console.warn(`[apiFetch] 429 重试已用尽，返回错误响应 (baseUrl=${baseUrl})`);
     return resp;
   }
 
-  // 理论上不会到达
   return fetch(url, init);
 }

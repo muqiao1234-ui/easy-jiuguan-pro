@@ -88,6 +88,20 @@ export default function SettingsPanel() {
           <span className="font-bold text-violet-700 dark:text-violet-300">角色B 粗体预览</span>
         </div>
 
+        {/* 低速率模式开关 */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <span className="text-xs text-slate-900 dark:text-slate-100">🐢 低速率模式</span>
+            <p className="text-[10px] text-slate-700 dark:text-slate-300 leading-snug">
+              针对有请求速率限制的模型（如 <strong>GLM-4-Flash</strong>、豆包等）请打开此开关，避免 429 错误。开启后请求间隔 ≥ 1.5 秒，DeepSeek/OpenAI 等不限速模型无需开启。
+            </p>
+          </div>
+          <Toggle
+            checked={state.lowRateMode}
+            onChange={(v) => dispatch({ type: 'SET_LOW_RATE_MODE', enabled: v })}
+          />
+        </div>
+
         {/* 壁纸上传 */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">

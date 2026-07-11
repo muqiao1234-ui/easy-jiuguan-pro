@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useReducer, useEffect } from 'react';
 import type { AppState, AppAction } from '../types';
 import { DEFAULT_DISTILLATION_CONFIG, DEFAULT_CONTEXT_CONFIG, DEFAULT_SCRIBE_TRIGGER_INTERVAL, SCRIBE_SYSTEM_PROMPT } from '../utils/constants';
+import { setLowRateMode } from '../utils/apiFetch';
 import * as Stores from '../db/stores';
 
 const initialState: AppState = {
@@ -28,6 +29,7 @@ const initialState: AppState = {
   mutualObservePrompt: '',
   thinkingEnabled: false,
   debugMode: false,
+  lowRateMode: false,
   distillationConfig: { ...DEFAULT_DISTILLATION_CONFIG },
   contextConfig: { ...DEFAULT_CONTEXT_CONFIG },
   tplUserWrapper: '',
@@ -104,6 +106,8 @@ function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, thinkingEnabled: !state.thinkingEnabled };
     case 'TOGGLE_DEBUG':
       return { ...state, debugMode: !state.debugMode };
+    case 'SET_LOW_RATE_MODE':
+      return { ...state, lowRateMode: action.enabled };
     case 'UPDATE_DISTILLATION_CONFIG':
       return {
         ...state,
@@ -184,6 +188,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (settings.scribeEnabled !== undefined) {
           dispatch({ type: 'SET_SCRIBE_ENABLED', enabled: settings.scribeEnabled });
         }
+        if (settings.lowRateMode !== undefined) {
+          dispatch({ type: 'SET_LOW_RATE_MODE', enabled: settings.lowRateMode });
+        }
       }
     });
   }, []);
@@ -222,12 +229,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       thinkingEnabled: state.thinkingEnabled,
       debugMode: state.debugMode,
       scribeEnabled: state.scribeEnabled,
+      lowRateMode: state.lowRateMode,
     });
   }, [state.theme, state.wallpaper, state.boldColorize, state.scribeEngine, state.scribeMode, state.galgamePrompt, state.mutualObservePrompt,
     state.tplUserWrapper, state.tplOtherCharWrapper, state.tplIdentityAnchor, state.tplWorldBookPrefix,
     state.tplDistilledPrefix, state.tplStateBookPrefix, state.tplEavesdropAppend, state.tplGalgameCharInjection,
     state.tplImplantMemoryPrefix, state.tplImplantScribePrefix, state.tplDistilledNodePrefix,
-    state.thinkingEnabled, state.debugMode, state.scribeEnabled]);
+    state.thinkingEnabled, state.debugMode, state.scribeEnabled, state.lowRateMode]);
+
+  // 低速率模式变化时同步到 apiFetch 模块
+  useEffect(() => {
+    setLowRateMode(state.lowRateMode);
+  }, [state.lowRateMode]);
 
   return (
     <AppContext.Provider value={{ state, dispatch }}>

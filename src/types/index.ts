@@ -270,6 +270,8 @@ export interface AppState {
   thinkingEnabled: boolean;
   /** 调试模式 — 显示原始 Prompt 导出按钮 */
   debugMode: boolean;
+  /** 低速率模式 — 针对限速 API（如 GLM-4-Flash）启用请求节流 + 429 自动重试 */
+  lowRateMode: boolean;
   distillationConfig: DistillationConfig;
   contextConfig: ContextAssemblyConfig;
   // 高级提示词模板（空=用默认）
@@ -309,6 +311,7 @@ export type AppAction =
   | { type: 'SET_MUTUAL_OBSERVE_PROMPT'; prompt: string }
   | { type: 'TOGGLE_THINKING' }
   | { type: 'TOGGLE_DEBUG' }
+  | { type: 'SET_LOW_RATE_MODE'; enabled: boolean }
   | { type: 'UPDATE_DISTILLATION_CONFIG'; config: Partial<DistillationConfig> }
   | { type: 'UPDATE_CONTEXT_CONFIG'; config: Partial<ContextAssemblyConfig> }
   | { type: 'SET_ADV_TPL'; key: string; value: string };
