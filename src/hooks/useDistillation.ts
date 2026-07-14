@@ -1,14 +1,19 @@
 import { useState, useCallback } from 'react';
-import type { MessageNode, ModelConfig, DistillationResult } from '../types';
+import type { MessageNode, ModelConfig, DistillationResult, WorldBookEntry } from '../types';
 import { generateId } from '../utils/id';
 import { DEFAULT_DISTILLATION_PROMPT, DEFAULT_TPL_DISTILLED_NODE_PREFIX } from '../utils/constants';
 
 import { apiFetch } from '../utils/apiFetch';
+
 interface PerformParams {
   nodes: MessageNode[];
   distillModelId: string;
   distillationPrompt: string;
   tplDistilledNodePrefix?: string;
+  /** 上一轮记忆结晶的完整内容（无则 null） */
+  prevDistilledContent?: string | null;
+  /** 蒸馏区间对话中激活的世界书条目 */
+  activatedWorldBookEntries?: WorldBookEntry[];
   getModelById: (id: string) => Promise<ModelConfig | undefined>;
   addMessageNode: (node: MessageNode) => Promise<void>;
   batchUpdateNodes: (
@@ -24,6 +29,20 @@ export function useDistillation() {
     return unarchivedCount >= threshold;
   };
 
+  /**
+   * 将世界书条目格式化为粘连到记忆结晶尾部的文本块。
+   * 格式：(附带：区间激活的世界书条目表)
+   *        [词条名] 设定详情...
+   */
+  function formatWorldBookAppendix(entries: WorldBookEntry[]): string {
+    if (!entries || entries.length === 0) return '';
+    const lines = entries.map((e) => {
+      const key = e.keys?.[0] || '未知';
+      return `[${key}] ${e.value}`;
+    });
+    return '\n\n(附带：区间激活的世界书条目表)\n' + lines.join('\n');
+  }
+
   const performDistillation = useCallback(async (params: PerformParams) => {
     setIsDistilling(true);
     try {
@@ -37,11 +56,43 @@ export function useDistillation() {
         .map((n) => `${n.senderName}: ${n.content}`)
         .join('\n\n');
 
-      // Use custom prompt template; {dialogue} is replaced with the actual text
-      const prompt = (params.distillationPrompt || DEFAULT_DISTILLATION_PROMPT).replace(
-        '{dialogue}',
-        dialogueText
-      );
+      // ── 构建蒸馏 AI 的 messages 数组 ──
+      // 结构：(提示词) → (上一轮记忆结晶) → (区间对话+激活世界书) → (提示词·尾部强化)
+      const basePrompt = params.distillationPrompt || DEFAULT_DISTILLATION_PROMPT;
+      const wbEntries = params.activatedWorldBookEntries || [];
+      const wbText = wbEntries.length > 0
+        ? '\n\n--- 本区间激活的世界书条目 ---\n' +
+          wbEntries.map((e) => `[${e.keys?.[0] || '未知'}] ${e.value}`).join('\n')
+        : '';
+
+      const messages: Array<{ role: string; content: string }> = [];
+
+      // 1. 蒸馏提示词（首部）
+      messages.push({ role: 'user', content: basePrompt });
+
+      // 2. 上一轮记忆结晶（如有）
+      if (params.prevDistilledContent) {
+        messages.push({
+          role: 'user',
+          content:
+            '这是上一轮蒸馏产出的记忆结晶，请在其基础上续写，保持记忆连贯性，不要重复已有内容：\n\n' +
+            params.prevDistilledContent,
+        });
+      }
+
+      // 3. 需要蒸馏的区间对话 + 激活的世界书内容
+      messages.push({
+        role: 'user',
+        content:
+          '以下是本轮需要蒸馏的对话内容' +
+          (wbText ? '（含区间激活的世界书信息）' : '') +
+          '：\n\n' +
+          dialogueText +
+          wbText,
+      });
+
+      // 4. 蒸馏提示词（尾部强化 — 确保输出格式）
+      messages.push({ role: 'user', content: basePrompt });
 
       const resp = await apiFetch(model.baseUrl, {
         method: 'POST',
@@ -51,7 +102,7 @@ export function useDistillation() {
         },
         body: JSON.stringify({
           model: model.defaultModel,
-          messages: [{ role: 'user', content: prompt }],
+          messages,
           stream: false,
         }),
       });
@@ -60,9 +111,15 @@ export function useDistillation() {
 
       const data = await resp.json();
       const summary = data.choices?.[0]?.message?.content || '蒸馏失败';
+
+      // ── 记忆结晶尾部粘连世界书条目 ──
+      // 格式：记忆结晶正文 + (附带：区间激活的世界书条目表)
+      const wbAppendix = formatWorldBookAppendix(wbEntries);
+      const fullSummary = summary + wbAppendix;
+
       const content = (params.tplDistilledNodePrefix || DEFAULT_TPL_DISTILLED_NODE_PREFIX)
         .replace('{total}', String(sorted.length))
-        .replace('{summary}', summary);
+        .replace('{summary}', fullSummary);
 
       // 蒸馏是 fire-and-forget 异步触发的，蒸馏过程中用户可能继续发消息。
       // 若摘要节点用 Date.now()，其时间戳会落在"蒸馏期间新发消息"之后，
@@ -89,7 +146,7 @@ export function useDistillation() {
       const result: DistillationResult = {
         roundStart: 1,
         roundEnd: sorted.length,
-        summary,
+        summary: fullSummary,
         nodeId: distilledNode.id,
       };
       setLastResult(result);

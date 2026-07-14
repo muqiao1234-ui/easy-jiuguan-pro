@@ -623,11 +623,25 @@ export function useChat(deps: UseChatDeps) {
               const retain = Math.max(0, deps.retainRecentCount ?? 0);
               const toDistill = newUnarchived.slice(0, newUnarchived.length - retain);
               if (toDistill.length > 0) {
+                // 查找上一轮记忆结晶（取最新的 distilled 节点）
+                const prevDistilled = updatedNodes
+                  .filter((n) => n.role === 'distilled' && n.conversationId === deps.conversationId)
+                  .sort((a, b) => b.timestamp - a.timestamp)[0];
+
+                // 扫描蒸馏区间激活的世界书条目
+                let distillWbEntries: WorldBookEntry[] = [];
+                const wbId = deps.characterA?.worldBookId;
+                if (wbId) {
+                  distillWbEntries = await deps.scanWorldBook(wbId, toDistill, deps.maxWorldBookEntries);
+                }
+
                 await deps.performDistillation({
                   nodes: toDistill,
                   distillModelId: deps.distillModelId,
                   distillationPrompt: deps.distillationPrompt,
                   tplDistilledNodePrefix: deps.tplDistilledNodePrefix,
+                  prevDistilledContent: prevDistilled?.content || null,
+                  activatedWorldBookEntries: distillWbEntries,
                   getModelById: deps.getModelById,
                   addMessageNode: deps.addMessageNode,
                   batchUpdateNodes: deps.batchUpdateNodes,
@@ -876,18 +890,37 @@ export function useChat(deps: UseChatDeps) {
         setError('无可蒸馏的对话');
         return;
       }
-      // 滑动窗口：手动蒸馏也保留最近 retainRecentCount 条
+      // 既往不咎：手动蒸馏只取一个 triggerThreshold 批次，不杀前面全部积累
+      // 滑动窗口：同时保留最近 retainRecentCount 条不归档
       const retain = Math.max(0, deps.retainRecentCount ?? 0);
-      const toDistill = unarchived.slice(0, unarchived.length - retain);
+      const maxBatch = Math.max(1, deps.triggerThreshold); // 一个批次最多 triggerThreshold 条
+      const maxDistillable = Math.max(0, unarchived.length - retain);
+      // 手动蒸馏：只取最旧的 min(maxBatch, maxDistillable) 条
+      const toDistill = unarchived.slice(0, Math.min(maxBatch, maxDistillable));
       if (toDistill.length === 0) {
         setError(`保留太少消息可用于蒸馏（当前 ${unarchived.length} 条，需保留 ${retain} 条）`);
         return;
       }
+
+      // 查找上一轮记忆结晶
+      const prevDistilled = allNodes
+        .filter((n) => n.role === 'distilled' && n.conversationId === deps.conversationId)
+        .sort((a, b) => b.timestamp - a.timestamp)[0];
+
+      // 扫描蒸馏区间激活的世界书条目
+      let distillWbEntries: WorldBookEntry[] = [];
+      const wbId = deps.characterA?.worldBookId;
+      if (wbId) {
+        distillWbEntries = await deps.scanWorldBook(wbId, toDistill, deps.maxWorldBookEntries);
+      }
+
       await deps.performDistillation({
         nodes: toDistill,
         distillModelId: deps.distillModelId,
         distillationPrompt: deps.distillationPrompt,
         tplDistilledNodePrefix: deps.tplDistilledNodePrefix,
+        prevDistilledContent: prevDistilled?.content || null,
+        activatedWorldBookEntries: distillWbEntries,
         getModelById: deps.getModelById,
         addMessageNode: deps.addMessageNode,
         batchUpdateNodes: deps.batchUpdateNodes,
