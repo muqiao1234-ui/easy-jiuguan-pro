@@ -18,6 +18,7 @@ import {
   DEFAULT_TPL_IMPLANT_MEMORY_PREFIX,
   DEFAULT_TPL_IMPLANT_SCRIBE_PREFIX,
   DEFAULT_TPL_DISTILLED_NODE_PREFIX,
+  DEFAULT_TPL_REVERSE_ENGINEER,
 } from '../../utils/constants';
 
 export default function SettingsPanel() {
@@ -481,6 +482,7 @@ export default function SettingsPanel() {
               { key: 'tplImplantMemoryPrefix', label: '植入记忆结晶前缀', desc: '一次性植入记忆功能中记忆结晶的前缀。占位符：{content}', defaultVal: DEFAULT_TPL_IMPLANT_MEMORY_PREFIX, rows: 2 },
               { key: 'tplImplantScribePrefix', label: '植入状态书前缀', desc: '一次性植入记忆功能中状态书的前缀。占位符：{content}', defaultVal: DEFAULT_TPL_IMPLANT_SCRIBE_PREFIX, rows: 2 },
               { key: 'tplDistilledNodePrefix', label: '蒸馏节点生成格式', desc: '蒸馏完成后生成的 distilled 消息节点格式。占位符：{total}, {summary}', defaultVal: DEFAULT_TPL_DISTILLED_NODE_PREFIX, rows: 2 },
+              { key: 'tplReverseEngineer', label: '高级卡逆向提示词', desc: '角色卡逆向功能使用的提示词。将世界书逆向串联为主角色提示词。占位符：{worldBook}, {originalPrompt}', defaultVal: DEFAULT_TPL_REVERSE_ENGINEER, rows: 8 },
             ] as const).map((item) => (
               <div key={item.key} className="space-y-1">
                 <div className="flex items-center justify-between">

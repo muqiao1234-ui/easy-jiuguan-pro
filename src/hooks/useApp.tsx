@@ -43,6 +43,7 @@ const initialState: AppState = {
   tplImplantMemoryPrefix: '',
   tplImplantScribePrefix: '',
   tplDistilledNodePrefix: '',
+  tplReverseEngineer: '',
 };
 
 function appReducer(state: AppState, action: AppAction): AppState {
@@ -170,6 +171,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           'tplWorldBookPrefix', 'tplDistilledPrefix', 'tplStateBookPrefix',
           'tplEavesdropAppend', 'tplGalgameCharInjection',
           'tplImplantMemoryPrefix', 'tplImplantScribePrefix', 'tplDistilledNodePrefix',
+          'tplReverseEngineer',
         ];
         for (const k of advKeys) {
           if ((settings as any)[k] !== undefined) dispatch({ type: 'SET_ADV_TPL', key: k, value: (settings as any)[k] });
@@ -226,6 +228,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       tplImplantMemoryPrefix: state.tplImplantMemoryPrefix,
       tplImplantScribePrefix: state.tplImplantScribePrefix,
       tplDistilledNodePrefix: state.tplDistilledNodePrefix,
+      tplReverseEngineer: state.tplReverseEngineer,
       thinkingEnabled: state.thinkingEnabled,
       debugMode: state.debugMode,
       scribeEnabled: state.scribeEnabled,
@@ -234,7 +237,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [state.theme, state.wallpaper, state.boldColorize, state.scribeEngine, state.scribeMode, state.galgamePrompt, state.mutualObservePrompt,
     state.tplUserWrapper, state.tplOtherCharWrapper, state.tplIdentityAnchor, state.tplWorldBookPrefix,
     state.tplDistilledPrefix, state.tplStateBookPrefix, state.tplEavesdropAppend, state.tplGalgameCharInjection,
-    state.tplImplantMemoryPrefix, state.tplImplantScribePrefix, state.tplDistilledNodePrefix,
+    state.tplImplantMemoryPrefix, state.tplImplantScribePrefix, state.tplDistilledNodePrefix, state.tplReverseEngineer,
     state.thinkingEnabled, state.debugMode, state.scribeEnabled, state.lowRateMode]);
 
   // 低速率模式变化时同步到 apiFetch 模块

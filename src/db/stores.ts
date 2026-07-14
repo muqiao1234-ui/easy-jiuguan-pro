@@ -390,6 +390,7 @@ export interface UISettings {
   tplImplantMemoryPrefix?: string;
   tplImplantScribePrefix?: string;
   tplDistilledNodePrefix?: string;
+  tplReverseEngineer?: string;
 }
 
 export async function getUISettings(): Promise<UISettings | null> {
@@ -417,10 +418,23 @@ export async function setUISettings(settings: Partial<UISettings>): Promise<void
         scribeEngine: settings.scribeEngine ?? existing.scribeEngine,
         scribeMode: settings.scribeMode ?? existing.scribeMode,
         galgamePrompt: settings.galgamePrompt ?? existing.galgamePrompt,
+        mutualObservePrompt: settings.mutualObservePrompt ?? existing.mutualObservePrompt,
         thinkingEnabled: settings.thinkingEnabled ?? existing.thinkingEnabled,
         debugMode: settings.debugMode ?? existing.debugMode,
         scribeEnabled: settings.scribeEnabled ?? existing.scribeEnabled,
         lowRateMode: settings.lowRateMode ?? existing.lowRateMode,
+        tplUserWrapper: settings.tplUserWrapper ?? existing.tplUserWrapper,
+        tplOtherCharWrapper: settings.tplOtherCharWrapper ?? existing.tplOtherCharWrapper,
+        tplIdentityAnchor: settings.tplIdentityAnchor ?? existing.tplIdentityAnchor,
+        tplWorldBookPrefix: settings.tplWorldBookPrefix ?? existing.tplWorldBookPrefix,
+        tplDistilledPrefix: settings.tplDistilledPrefix ?? existing.tplDistilledPrefix,
+        tplStateBookPrefix: settings.tplStateBookPrefix ?? existing.tplStateBookPrefix,
+        tplEavesdropAppend: settings.tplEavesdropAppend ?? existing.tplEavesdropAppend,
+        tplGalgameCharInjection: settings.tplGalgameCharInjection ?? existing.tplGalgameCharInjection,
+        tplImplantMemoryPrefix: settings.tplImplantMemoryPrefix ?? existing.tplImplantMemoryPrefix,
+        tplImplantScribePrefix: settings.tplImplantScribePrefix ?? existing.tplImplantScribePrefix,
+        tplDistilledNodePrefix: settings.tplDistilledNodePrefix ?? existing.tplDistilledNodePrefix,
+        tplReverseEngineer: settings.tplReverseEngineer ?? existing.tplReverseEngineer,
       };
       await uiSettingsStore.setItem('settings', merged);
     } catch (e) {

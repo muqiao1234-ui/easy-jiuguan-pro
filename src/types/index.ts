@@ -286,6 +286,7 @@ export interface AppState {
   tplImplantMemoryPrefix: string;
   tplImplantScribePrefix: string;
   tplDistilledNodePrefix: string;
+  tplReverseEngineer: string;
 }
 
 /** App Action（useReducer） */

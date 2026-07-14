@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useCharacters } from '../../hooks/useCharacters';
 import { useWorldBooks } from '../../hooks/useWorldBooks';
-import { AVATAR_MAX_WIDTH, AVATAR_QUALITY } from '../../utils/constants';
+import { useApp } from '../../hooks/useApp';
+import { AVATAR_MAX_WIDTH, AVATAR_QUALITY, DEFAULT_TPL_REVERSE_ENGINEER } from '../../utils/constants';
 import { importSillyTavernCard, exportToSillyTavernJson } from '../../utils/sillyTavernCard';
+import { apiFetch } from '../../utils/apiFetch';
 import * as Stores from '../../db/stores';
 import Button from '../ui/Button';
 import Modal from '../ui/Modal';
@@ -44,6 +46,7 @@ function isBase64Image(s: string): boolean {
 export default function CharacterManager() {
   const { characters, loadCharacters, addCharacter, updateCharacter, deleteCharacter } = useCharacters();
   const { worldbooks, loadWorldBooks } = useWorldBooks();
+  const { state } = useApp();
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ name: '', systemPrompt: '', avatar: '🤖', worldBookId: '' });
@@ -53,6 +56,8 @@ export default function CharacterManager() {
   const importRef = useRef<HTMLInputElement>(null);
   const [importStatus, setImportStatus] = useState<string>('');
   const [exportStatus, setExportStatus] = useState<string>('');
+  const [reverseConfirmId, setReverseConfirmId] = useState<string | null>(null);
+  const [reverseStatus, setReverseStatus] = useState<string>('');
 
   useEffect(() => { loadCharacters(); loadWorldBooks(); }, [loadCharacters, loadWorldBooks]);
 
@@ -147,6 +152,85 @@ export default function CharacterManager() {
     }
   };
 
+  // ─── 高级卡逆向 ───
+  const handleReverseEngineer = async (charId: string) => {
+    const char = characters.find((c) => c.id === charId);
+    if (!char) return;
+    setReverseConfirmId(null);
+
+    // 检查蒸馏模型是否已配置
+    if (!state.currentDistillModelId) {
+      setReverseStatus('❌ 请先在设置中配置蒸馏/逆向模型');
+      setTimeout(() => setReverseStatus(''), 5000);
+      return;
+    }
+
+    setReverseStatus(`🔄 正在逆向「${char.name}」...`);
+
+    try {
+      const model = await Stores.getModelById(state.currentDistillModelId);
+      if (!model) throw new Error('蒸馏模型未找到');
+      if (!model.apiKey) throw new Error('蒸馏模型未配置 API Key');
+
+      // 获取角色绑定的世界书
+      let worldBookText = '';
+      if (char.worldBookId) {
+        const wb = await Stores.getWorldBookById(char.worldBookId);
+        if (wb && wb.entries.length > 0) {
+          worldBookText = wb.entries
+            .map((e) => `【${e.keys.join('/')}】\n${e.value}`)
+            .join('\n\n---\n\n');
+        }
+      }
+
+      if (!worldBookText.trim()) {
+        throw new Error('该角色未绑定世界书或世界书为空，无需逆向');
+      }
+
+      // 构建逆向提示词
+      const promptTemplate = state.tplReverseEngineer || DEFAULT_TPL_REVERSE_ENGINEER;
+      const prompt = promptTemplate
+        .replace('{worldBook}', worldBookText)
+        .replace('{originalPrompt}', char.systemPrompt || '（空）');
+
+      const resp = await apiFetch(model.baseUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${model.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: model.defaultModel,
+          messages: [{ role: 'user', content: prompt }],
+          stream: false,
+          temperature: model.temperature ?? 0.8,
+          top_p: model.topP ?? 0.95,
+        }),
+      });
+
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '');
+        throw new Error(`API 错误 ${resp.status}: ${errText.slice(0, 200)}`);
+      }
+
+      const data = await resp.json();
+      const newPrompt = data.choices?.[0]?.message?.content || '';
+
+      if (!newPrompt.trim()) {
+        throw new Error('AI 返回空内容，逆向失败');
+      }
+
+      // 更新角色 systemPrompt
+      await updateCharacter(charId, { systemPrompt: newPrompt.trim() });
+
+      setReverseStatus(`✅ 逆向完成！「${char.name}」的主提示词已更新（${newPrompt.length} 字）`);
+      setTimeout(() => setReverseStatus(''), 8000);
+    } catch (err: any) {
+      setReverseStatus(`❌ 逆向失败: ${err.message || err}`);
+      setTimeout(() => setReverseStatus(''), 8000);
+    }
+  };
+
   const wbOptions = [{ value: '', label: '无世界书' }, ...worldbooks.map((w) => ({ value: w.id, label: w.name }))];
 
   return (
@@ -173,10 +257,10 @@ export default function CharacterManager() {
         </div>
       </div>
 
-      {/* 导入/导出状态提示 */}
-      {(importStatus || exportStatus) && (
+      {/* 导入/导出/逆向状态提示 */}
+      {(importStatus || exportStatus || reverseStatus) && (
         <div className="mb-2 px-3 py-1.5 bg-slate-800/60 border border-slate-700/50 rounded-lg text-xs text-slate-300 font-mono">
-          {importStatus || exportStatus}
+          {importStatus || exportStatus || reverseStatus}
         </div>
       )}
 
@@ -190,8 +274,20 @@ export default function CharacterManager() {
                 <span className="text-xl">{c.avatar}</span>
               )}
               <span className="text-sm font-medium text-slate-200">{c.name}</span>
+              {c.worldBookId && (
+                <span className="text-[9px] px-1 py-0.5 bg-amber-600/20 text-amber-400 rounded-full">有世界书</span>
+              )}
             </div>
             <div className="flex items-center gap-1">
+              {c.worldBookId && (
+                <button
+                  onClick={() => setReverseConfirmId(c.id)}
+                  className="text-red-500 hover:text-red-400 p-0.5"
+                  title="⚠️ 高级卡逆向 — 将世界书逆向为主提示词（消耗 Token）"
+                >
+                  <Icon name="distill" size={14} />
+                </button>
+              )}
               <button onClick={() => handleExportCard(c.id)} className="text-slate-500 hover:text-amber-400 p-0.5" title="导出为酒馆格式 JSON"><Icon name="branch" size={14} /></button>
               <button onClick={() => openEdit(c.id)} className="text-slate-500 hover:text-slate-300 p-0.5"><Icon name="edit" size={14} /></button>
               <button onClick={() => setDeleteConfirmId(c.id)} className="text-slate-500 hover:text-red-400 p-0.5"><Icon name="trash" size={14} /></button>
@@ -293,6 +389,47 @@ export default function CharacterManager() {
             }}
           >
             确认删除
+          </Button>
+        </div>
+      </Modal>
+
+      {/* Reverse engineer confirmation modal */}
+      <Modal
+        open={!!reverseConfirmId}
+        onClose={() => setReverseConfirmId(null)}
+        title="⚠️ 高级卡逆向"
+      >
+        <div className="space-y-3">
+          <div className="bg-red-900/30 border border-red-600/40 rounded-lg p-3 space-y-2">
+            <p className="text-xs text-red-300 font-semibold">
+              ⚠️ 警告：此操作将消耗 Token 调用蒸馏模型
+            </p>
+            <p className="text-xs text-red-200/80 leading-relaxed">
+              逆向功能适用于<strong>主提示词空白、系统和剧情全在世界书里</strong>的高级卡。
+              将使用<strong>蒸馏模型</strong>（当前：
+              {state.currentDistillModelId ? '已配置' : '❌ 未配置'}
+              ）将世界书内容逆向串联为主角色提示词。
+            </p>
+            <p className="text-xs text-red-200/80 leading-relaxed">
+              • 普通卡无需使用，逆向需要花费 Token<br/>
+              • 极度建议在一些空白高级卡上使用<br/>
+              • 不保证 100% 还原，效率约 60%-80%<br/>
+              • 逆向结果将<strong>覆盖</strong>当前主提示词
+            </p>
+          </div>
+          <p className="text-sm text-slate-300">
+            确定要对角色「{characters.find((c) => c.id === reverseConfirmId)?.name || ''}」进行逆向吗？
+          </p>
+        </div>
+        <div className="flex justify-end gap-2 mt-4">
+          <Button variant="secondary" onClick={() => setReverseConfirmId(null)}>取消</Button>
+          <Button
+            className="!bg-red-600 hover:!bg-red-500"
+            onClick={() => {
+              if (reverseConfirmId) handleReverseEngineer(reverseConfirmId);
+            }}
+          >
+            确认逆向
           </Button>
         </div>
       </Modal>
