@@ -6,6 +6,51 @@ import Icon from '../ui/Icon';
 
 const AI_GUIDE_PROMPT = `请帮我联网搜索【[请输入你想查询的作品/设定，例如：少女前线]】的核心世界观、重要阵营、关键名词设定。并严格按照以下 JSON 格式输出，不要包含任何 markdown 包裹框或多余解释，只需给出合法的 JSON 数组：[ { "keys": ["关键词1", "别名"], "value": "设定详情描述...", "priority": 5 } ]`;
 
+/* ═══════════════════════════════════════
+ *  Easy世界书 + 新手教程 内容
+ *  来源: outputs/easy世界书+教程.txt
+ * ═══════════════════════════════════════ */
+const EASY_GUIDE_TEXT = `📖 Easy酒馆Pro：世界书（Lorebook）新手教学
+
+🧭 第一部分：世界书的底层超能力是什么？
+如果把几万字的小说设定、上百个配角名字全部塞进你的角色人设（System Prompt）里，大模型就会"烧糊涂"，不仅 暴吞你的 API Token 让你钱包流血，还会频繁导致 AI 忘词、抢戏或抢人设。
+
+世界书（Lorebook）就是你的"按需记忆检索器"：
+
+实时扫描：当你或 AI 说出特定的"硬字符/关键词"（比如 "十年前的约定" 或 "茉莉星光学院"）时。
+
+瞬间注入：世界书在后台会"叮"的一下被精准触发，把该词条对应的详细描述动态塞进大模型的上下文中。
+
+不用不计费：如果当前对话没提到这些词，它们就老老实实躺在本地，不会每次都调用！
+
+🛡️ 哪些东西适合放进世界书？
+次要人物/背景 NPC（如：配角、黑市商人、敌人）
+
+特殊道具/武器/药剂/载具（如：炼神炉、碳化硅雷达、魔剑）
+
+世界观/地理名词/历史事件（如：审判庭、第一次地牢战争、茉莉星光学院）
+
+⚠️ 注意： 核心主 AI 的性格、外貌、和你的亲密关系，千万别放进世界书，请老老实实写在【角色卡人设】里。
+
+⚡ 第二部分：Easy世界书"AI自动蒸馏"懒人神技
+以前玩酒馆最痛苦的就是要一条一条手动输入 Key 和 Value，简直像在上班填 Excel。这里准备了一个一键白嫖联网 AI 的终极公式，让你 10 分钟建立一本完美的百万字世界设定书！
+
+🛠️ "3分钟自动蒸馏"保姆级步骤：
+第一步：复制下方神奇指令
+复制下面这个神奇的【命令框】里所有字：
+
+第二步：调戏联网 AI 生产数据
+打开联网APP 之一 【豆包】（找国内小说、二创、游戏设定极灵敏！）或者 【DeepSeek / 智谱】等。把命令里的 [请输入你想查询的作品/设定，例如：魔戒] 替换成你想玩的背景，发送！
+
+第三步：复制 JSON 并一键粘贴
+AI 会听话地给你吐出一大串格式整齐的 [{ "keys": ... }] 代码。你完全不需要看懂它，直接全选复制它的回答。回到 Easy酒馆Pro，点击 【新建世界书】 -> 【导入 JSON】，把代码往框里一贴，搞定！
+
+第四步：角色卡关联绑定（超级重要，90%的新人都漏了这步！）
+导入书之后，它默认是睡着的。你必须点开你正在聊天的 【角色卡设置】 面板，在里面的 "世界书关联 / Lorebook Link" 下拉菜单中，勾选你刚才导入的这本设定集。
+只有绑定了，你的角色和你在聊天时，才能真正享受到这本世界设定书的加持！
+
+🎉 恭喜老爷，你已经完全毕业了！开始导入专属于你的神奇世界啦！`;
+
 type JsonEntry = { keys: string[]; value: string; priority?: number };
 
 export default function WorldBookManager() {
@@ -17,8 +62,8 @@ export default function WorldBookManager() {
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [entryForm, setEntryForm] = useState({ keys: '', value: '', priority: '5' });
 
-  // AI 指南面板展开状态
-  const [guideOpen, setGuideOpen] = useState(false);
+  // AI 指南弹窗
+  const [guideModalOpen, setGuideModalOpen] = useState(false);
 
   // JSON 批量导入 — 按世界书 ID 管理展开状态和文本内容
   const [importOpen, setImportOpen] = useState<Record<string, boolean>>({});
@@ -146,39 +191,47 @@ export default function WorldBookManager() {
 
   return (
     <div className="space-y-2">
-      {/* ===== AI 快速生成指南面板 ===== */}
-      <div className="bg-amber-900/20 border border-amber-700/40 rounded-lg overflow-hidden">
-        <button
-          onClick={() => setGuideOpen(!guideOpen)}
-          className="w-full flex items-center justify-between px-3 py-2.5 text-sm transition-colors hover:bg-amber-900/10"
-        >
-          <span className="flex items-center gap-2 text-amber-400 font-medium">
-            <Icon name="book" size={15} />
-            Easy 世界书 · AI 快速生成指南
-          </span>
-          <Icon name="chevron" size={14} className={`text-amber-400/60 transition-transform ${guideOpen ? 'rotate-180' : ''}`} />
-        </button>
+      {/* ===== Easy世界书 + 新手教程 按钮 ===== */}
+      <Button
+        variant="secondary"
+        className="w-full !bg-amber-900/30 !border-amber-700/40 hover:!bg-amber-900/45 !text-amber-400 font-medium text-sm"
+        onClick={() => setGuideModalOpen(true)}
+      >
+        <Icon name="book" size={15} />
+        Easy世界书 + 新手教程
+      </Button>
 
-        {guideOpen && (
-          <div className="px-3 pb-3 space-y-3 border-t border-amber-700/20 pt-3">
-            <p className="text-xs text-slate-400">
-              将下方命令复制到豆包 / DeepSeek 等联网 AI，生成标准 JSON 后粘贴导入，无需逐条手写世界书。
-            </p>
+      {/* ===== Easy世界书 + 新手教程 弹窗 ===== */}
+      <Modal open={guideModalOpen} onClose={() => setGuideModalOpen(false)} title="📖 Easy世界书 + 新手教程">
+        <div className="space-y-3 max-h-[60vh] overflow-y-auto text-sm text-slate-300 leading-relaxed">
+          {/* 教程正文 — 保留换行，支持简单 Markdown */}
+          {EASY_GUIDE_TEXT.split('\n').map((line, i) => {
+            const trimmed = line.trim();
+            if (!trimmed) return <br key={i} />;
+            // 粗体标题行（📖🧭⚡🛠️ 开头或 ## 开头）
+            if (trimmed.startsWith('📖') || trimmed.startsWith('🧭') || trimmed.startsWith('⚡') || trimmed.startsWith('🛠️') || trimmed.startsWith('🛡️') || trimmed.startsWith('⚠️') || trimmed.startsWith('🎉')) {
+              return <h3 key={i} className="text-amber-400 font-semibold text-sm mt-3 mb-1">{trimmed}</h3>;
+            }
+            return <p key={i} className="text-slate-300">{line}</p>;
+          })}
+        </div>
 
-            <div className="relative">
-              <pre className="bg-slate-950/80 text-slate-300 text-xs rounded-lg p-3 pr-10 whitespace-pre-wrap break-words leading-relaxed border border-slate-700/50">
-                {AI_GUIDE_PROMPT}
-              </pre>
-              <button
-                onClick={handleCopyPrompt}
-                className="absolute top-2 right-2 px-2 py-1 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white transition-colors"
-              >
-                一键复制
-              </button>
-            </div>
+        {/* AI 命令快捷复制区 */}
+        <div className="mt-4 p-3 bg-slate-900/60 rounded-lg border border-slate-700/50">
+          <p className="text-xs text-amber-400 font-semibold mb-2">⚡ 一键复制 AI 生成命令：</p>
+          <div className="relative">
+            <pre className="bg-slate-950/80 text-slate-300 text-xs rounded-lg p-3 pr-10 whitespace-pre-wrap break-words leading-relaxed border border-slate-700/50">
+              {AI_GUIDE_PROMPT}
+            </pre>
+            <button
+              onClick={handleCopyPrompt}
+              className="absolute top-2 right-2 px-2 py-1 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white transition-colors"
+            >
+              一键复制
+            </button>
           </div>
-        )}
-      </div>
+        </div>
+      </Modal>
 
       {/* ===== 世界书列表 ===== */}
       <div className="flex items-center justify-between mb-3">
