@@ -511,6 +511,7 @@ export default function ChatArea({
         onError={setValidationError}
         onMutualObserve={handleMutualObserve}
         isObserving={isObserving}
+        distilledNodes={localNodes.filter((n) => n.role === 'distilled')}
       />
 
       {/* 角色 & 模型选择弹窗 */}

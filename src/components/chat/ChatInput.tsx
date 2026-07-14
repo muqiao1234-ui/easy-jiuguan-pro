@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import type { SendTarget } from '../../types';
+import type { SendTarget, MessageNode } from '../../types';
 import Button from '../ui/Button';
 import Icon from '../ui/Icon';
+import Modal from '../ui/Modal';
 
 interface ChatInputProps {
   charAId: string | null;
@@ -27,6 +28,8 @@ interface ChatInputProps {
   onError: (msg: string) => void;
   onMutualObserve: () => void;
   isObserving: boolean;
+  /** 所有记忆结晶节点，用于记忆回廊展示 */
+  distilledNodes: MessageNode[];
 }
 
 export default function ChatInput({
@@ -53,9 +56,11 @@ export default function ChatInput({
   onError,
   onMutualObserve,
   isObserving,
+  distilledNodes,
 }: ChatInputProps) {
   const [text, setText] = useState('');
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [memoryCorridorOpen, setMemoryCorridorOpen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -256,8 +261,56 @@ export default function ChatInput({
           >
             <Icon name="distill" size={14} /> 蒸馏
           </Button>
+          <Button
+            onClick={() => setMemoryCorridorOpen(true)}
+            disabled={distilledNodes.length === 0}
+            variant="secondary"
+            size="sm"
+            title="查看所有记忆结晶的串联回廊"
+          >
+            📖 记忆回廊
+          </Button>
         </div>
       )}
+      {/* 记忆回廊弹窗 */}
+      <Modal
+        open={memoryCorridorOpen}
+        onClose={() => setMemoryCorridorOpen(false)}
+        title="📖 记忆回廊"
+        maxWidth="max-w-2xl"
+      >
+        <div className="space-y-4 max-h-[60vh] overflow-y-auto">
+          {distilledNodes.length === 0 ? (
+            <p className="text-sm text-slate-400 text-center py-8">
+              还没有记忆结晶，发送对话或手动蒸馏后会产生。
+            </p>
+          ) : (
+            distilledNodes
+              .sort((a, b) => a.timestamp - b.timestamp)
+              .map((node, i) => (
+                <div
+                  key={node.id}
+                  className="bg-slate-800/60 border border-slate-700/40 rounded-lg p-3 space-y-2"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-mono text-amber-400/70">
+                      #{i + 1}
+                    </span>
+                    <span className="text-[11px] text-slate-500">
+                      {new Date(node.timestamp).toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </span>
+                  </div>
+                  <pre className="text-xs text-slate-300 whitespace-pre-wrap break-words leading-relaxed font-sans">
+                    {node.content}
+                  </pre>
+                </div>
+              ))
+          )}
+        </div>
+      </Modal>
     </div>
   );
 }

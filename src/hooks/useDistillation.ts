@@ -31,16 +31,14 @@ export function useDistillation() {
 
   /**
    * 将世界书条目格式化为粘连到记忆结晶尾部的文本块。
+   * 只保留条目名词，不包含正文，节约 token。
    * 格式：(附带：区间激活的世界书条目表)
-   *        [词条名] 设定详情...
+   *       [词条1] [词条2] [词条3]
    */
   function formatWorldBookAppendix(entries: WorldBookEntry[]): string {
     if (!entries || entries.length === 0) return '';
-    const lines = entries.map((e) => {
-      const key = e.keys?.[0] || '未知';
-      return `[${key}] ${e.value}`;
-    });
-    return '\n\n(附带：区间激活的世界书条目表)\n' + lines.join('\n');
+    const names = entries.map((e) => `[${e.keys?.[0] || '未知'}]`).join(' ');
+    return '\n\n(附带：区间激活的世界书条目表)\n' + names;
   }
 
   const performDistillation = useCallback(async (params: PerformParams) => {
