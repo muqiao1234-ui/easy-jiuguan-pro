@@ -138,10 +138,16 @@ export default function WorldBookManager() {
 
     let parsed: JsonEntry[];
     try {
-      parsed = JSON.parse(raw);
+      // 容错：剥离可能的 ```json ... ``` 代码块包裹
+      let cleanRaw = raw.trim();
+      const fenceMatch = cleanRaw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+      if (fenceMatch) {
+        cleanRaw = fenceMatch[1].trim();
+      }
+      parsed = JSON.parse(cleanRaw);
       if (!Array.isArray(parsed)) throw new Error('不是数组');
     } catch {
-      setImportError((prev) => ({ ...prev, [wbId]: 'JSON 格式错误，请检查'}));
+      setImportError((prev) => ({ ...prev, [wbId]: 'JSON 格式错误，请检查' }));
       return;
     }
 

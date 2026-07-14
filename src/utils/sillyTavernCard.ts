@@ -54,9 +54,11 @@ async function extractCharaFromPng(file: File): Promise<any | null> {
     if (bytes[0] !== 0x89 || bytes[1] !== 0x50 || bytes[2] !== 0x4e || bytes[3] !== 0x47) return null;
 
     let offset = 8;
-    while (offset < bytes.length - 8) {
+      while (offset + 8 <= bytes.length) {
       // 读取 chunk length (4 bytes big-endian)
       const length = (bytes[offset] << 24) | (bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3];
+      // 边界校验：length 不能导致 dataEnd 越界（留出 CRC 4 字节）
+      if (length < 0 || offset + 8 + length + 4 > bytes.length) break;
       const type = String.fromCharCode(bytes[offset + 4], bytes[offset + 5], bytes[offset + 6], bytes[offset + 7]);
 
       if (type === 'tEXt' || type === 'iTXt') {
@@ -69,7 +71,7 @@ async function extractCharaFromPng(file: File): Promise<any | null> {
         // tEXt 格式: keyword\0value
         // iTXt 格式: keyword\0compressionFlag\0compressionMethod\0languageTag\0translatedKeyword\0text
         const nullIdx = text.indexOf('\0');
-        if (nullIdx === -1) continue;
+        if (nullIdx === -1) { offset = offset + 12 + length; continue; }
         const keyword = text.substring(0, nullIdx);
 
         if (keyword === 'chara') {
@@ -77,15 +79,21 @@ async function extractCharaFromPng(file: File): Promise<any | null> {
           if (type === 'tEXt') {
             base64Value = text.substring(nullIdx + 1);
           } else {
-            // iTXt: skip compressionFlag(1) + compressionMethod(1) + languageTag\0 + translatedKeyword\0
+            // iTXt: compressionFlag(1) + compressionMethod(1) + languageTag\0 + translatedKeyword\0
+            const compressionFlag = text.charCodeAt(nullIdx + 1);
+            if (compressionFlag !== 0) {
+              // 压缩的 iTXt 块暂不支持，跳过
+              offset = offset + 12 + length;
+              continue;
+            }
             let pos = nullIdx + 1;
             pos += 1; // compression flag
             pos += 1; // compression method
             const langEnd = text.indexOf('\0', pos);
-            if (langEnd === -1) continue;
+            if (langEnd === -1) { offset = offset + 12 + length; continue; }
             pos = langEnd + 1;
             const transEnd = text.indexOf('\0', pos);
-            if (transEnd === -1) continue;
+            if (transEnd === -1) { offset = offset + 12 + length; continue; }
             pos = transEnd + 1;
             base64Value = text.substring(pos);
           }
@@ -103,6 +111,7 @@ async function extractCharaFromPng(file: File): Promise<any | null> {
             try {
               return JSON.parse(base64Value.trim());
             } catch {
+              offset = offset + 12 + length;
               continue;
             }
           }
@@ -180,10 +189,8 @@ export async function importSillyTavernCard(file: File): Promise<ImportResult> {
   if (avatarBase64) {
     avatar = avatarBase64;
   } else if (data.avatar && typeof data.avatar === 'string') {
-    // 确保是 data URI 格式
-    if (data.avatar.startsWith('data:image/')) {
-      avatar = data.avatar;
-    } else if (data.avatar.startsWith('http')) {
+    // 支持 data URI（base64）和 http(s) URL
+    if (data.avatar.startsWith('data:image/') || data.avatar.startsWith('http://') || data.avatar.startsWith('https://')) {
       avatar = data.avatar;
     }
   }

@@ -8,7 +8,7 @@ import MarkdownRenderer from './MarkdownRenderer';
 import GalgameCard from './GalgameCard';
 
 function isBase64Image(s: string): boolean {
-  return s.startsWith('data:image/');
+  return s.startsWith('data:image/') || s.startsWith('http://') || s.startsWith('https://');
 }
 
 interface MessageBubbleProps {
