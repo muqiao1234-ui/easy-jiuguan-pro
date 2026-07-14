@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { useApp } from '../../hooks/useApp';
+import { readFileAsTextRobust } from '../../utils/encoding';
 import Toggle from '../ui/Toggle';
 import Button from '../ui/Button';
 import { processWallpaper } from '../../utils/wallpaper';
@@ -419,7 +420,7 @@ export default function SettingsPanel() {
             input.onchange = async (e) => {
               const file = (e.target as HTMLInputElement).files?.[0];
               if (!file) return;
-              const text = await file.text();
+              const text = await readFileAsTextRobust(file);
               try {
                 const data = JSON.parse(text);
                 const db = await import('../../db/index');

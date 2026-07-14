@@ -1,5 +1,6 @@
 import type { Character, WorldBook, WorldBookEntry } from '../types';
 import { generateId } from './id';
+import { readFileAsTextRobust } from './encoding';
 
 /* ════════════════════════════════════════════════════════
  *  SillyTavern V2 角色卡导入/导出
@@ -63,7 +64,7 @@ async function extractCharaFromPng(file: File): Promise<any | null> {
         const dataStart = offset + 8;
         const dataEnd = dataStart + length;
         const chunkData = bytes.slice(dataStart, dataEnd);
-        const text = new TextDecoder().decode(chunkData);
+        const text = new TextDecoder('utf-8', { fatal: false }).decode(chunkData);
 
         // tEXt 格式: keyword\0value
         // iTXt 格式: keyword\0compressionFlag\0compressionMethod\0languageTag\0translatedKeyword\0text
@@ -91,8 +92,12 @@ async function extractCharaFromPng(file: File): Promise<any | null> {
 
           // base64 解码
           try {
-            const decoded = atob(base64Value.trim());
-            return JSON.parse(decoded);
+            const binary = atob(base64Value.trim());
+            // atob 返回 Latin-1 字符串（每个字符 charCode 0-255），
+            // 需要转为原始字节再用 UTF-8 解码，否则中文会乱码
+            const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+            const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+            return JSON.parse(text);
           } catch {
             // 可能不是 base64，直接当 JSON
             try {
@@ -148,8 +153,8 @@ export async function importSillyTavernCard(file: File): Promise<ImportResult> {
       throw new Error('PNG 文件中未找到角色卡数据 (chara 块)');
     }
   } else if (file.type === 'application/json' || file.name.toLowerCase().endsWith('.json')) {
-    // JSON 文件
-    const text = await file.text();
+    // JSON 文件 — 使用健壮编码检测，修复 GBK/Latin-1 mojibake 等中文乱码
+    const text = await readFileAsTextRobust(file);
     cardData = JSON.parse(text);
   } else {
     throw new Error('不支持的文件格式，请上传 .png 或 .json 文件');
