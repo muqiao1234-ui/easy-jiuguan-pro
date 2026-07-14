@@ -43,6 +43,48 @@ function isBase64Image(s: string): boolean {
   return s.startsWith('data:image/');
 }
 
+/**
+ * 清理逆向 AI 输出的前言/确认语
+ * 模型经常输出 "好的，理解了。\n以下是...：\n\n<实际内容>" 这样的格式
+ */
+function cleanReverseOutput(raw: string): string {
+  let text = raw.trim();
+  if (!text) return '';
+
+  // 常见前言模式：找到第一个换行后的实际内容
+  // "好的，理解了。" / "以下是为您构建的..." / "作为您的..." 等
+  const introPatterns = [
+    // "好的/理解/收到/明白/没问题/确认" 开头，到第一个换行或冒号后
+    /^(好的|理解了|收到|明白|没问题|确认|没问题)[，,。.\s]*.*?(?:[。.]\s*|[:：]\s*|\n)/,
+    // "以下是为您..." / "以下是..." 开头
+    /^以下是为您.*?(?:[。.]\s*|[:：]\s*|\n)/,
+    // "作为您的..." 开头
+    /^作为您的.*?(?:[。.]\s*|[:：]\s*|\n)/,
+    // "我将..." 开头
+    /^我将.*?(?:[。.]\s*|[:：]\s*|\n)/,
+    // "这是..." 开头
+    /^这是.*?(?:[。.]\s*|[:：]\s*|\n)/,
+  ];
+
+  // 尝试移除前言（最多迭代 3 次防止无限循环）
+  for (let i = 0; i < 3; i++) {
+    const before = text;
+    for (const pattern of introPatterns) {
+      const match = text.match(pattern);
+      if (match) {
+        text = text.slice(match[0].length).trim();
+        break;
+      }
+    }
+    if (text === before) break;
+  }
+
+  // 移除 markdown 代码块包裹
+  text = text.replace(/^```(?:\w+)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+
+  return text;
+}
+
 export default function CharacterManager() {
   const { characters, loadCharacters, addCharacter, updateCharacter, deleteCharacter } = useCharacters();
   const { worldbooks, loadWorldBooks } = useWorldBooks();
@@ -152,25 +194,26 @@ export default function CharacterManager() {
   };
 
   // ─── 高级卡逆向 ───
+  const [reverseLoading, setReverseLoading] = useState(false);
+
   const handleReverseEngineer = async (charId: string) => {
     const char = characters.find((c) => c.id === charId);
     if (!char) return;
 
-    // 检查蒸馏模型是否已配置
     if (!state.currentDistillModelId) {
-      setReverseStatus('❌ 请先在设置中配置蒸馏/逆向模型');
-      setTimeout(() => setReverseStatus(''), 5000);
+      setReverseStatus('❌ 请先在设置中配置蒸馏 AI 模型');
+      setTimeout(() => setReverseStatus(''), 8000);
       return;
     }
 
-    setReverseStatus(`🔄 正在逆向「${char.name}」...`);
+    setReverseLoading(true);
+    setReverseStatus('');
 
     try {
       const model = await Stores.getModelById(state.currentDistillModelId);
-      if (!model) throw new Error('蒸馏模型未找到');
-      if (!model.apiKey) throw new Error('蒸馏模型未配置 API Key');
+      if (!model) throw new Error('❌ 蒸馏模型未找到，请检查设置');
+      if (!model.apiKey) throw new Error('❌ 蒸馏模型未配置 API Key，请先在模型管理中填写');
 
-      // 获取角色绑定的世界书
       let worldBookText = '';
       if (char.worldBookId) {
         const wb = await Stores.getWorldBookById(char.worldBookId);
@@ -182,10 +225,9 @@ export default function CharacterManager() {
       }
 
       if (!worldBookText.trim()) {
-        throw new Error('该角色未绑定世界书或世界书为空，无需逆向');
+        throw new Error('❌ 该角色未绑定世界书或世界书为空，无需逆向');
       }
 
-      // 构建逆向提示词
       const promptTemplate = state.tplReverseEngineer || DEFAULT_TPL_REVERSE_ENGINEER;
       const prompt = promptTemplate
         .replace('{worldBook}', worldBookText)
@@ -208,20 +250,36 @@ export default function CharacterManager() {
 
       if (!resp.ok) {
         const errText = await resp.text().catch(() => '');
-        throw new Error(`API 错误 ${resp.status}: ${errText.slice(0, 200)}`);
+        if (resp.status === 401 || resp.status === 403) {
+          throw new Error(`❌ API 鉴权失败 (${resp.status})：请检查 API Key 是否正确`);
+        }
+        if (resp.status === 429) {
+          throw new Error('❌ API 速率限制 (429)：请求过于频繁，请稍后重试或开启低速率模式');
+        }
+        if (resp.status >= 500) {
+          throw new Error(`❌ API 服务端错误 (${resp.status})：${errText.slice(0, 150)}`);
+        }
+        if (errText.includes('content_policy') || errText.includes('safety') || errText.includes('refuse') || errText.includes('拒绝')) {
+          throw new Error('❌ AI 拒绝输出，请调整逆向提示词或更换模型/API');
+        }
+        throw new Error(`❌ API 错误 (${resp.status})：${errText.slice(0, 200)}`);
       }
 
       const data = await resp.json();
-      const newPrompt = data.choices?.[0]?.message?.content || '';
+      let newPrompt = data.choices?.[0]?.message?.content || data.choices?.[0]?.message?.reasoning_content || '';
 
       if (!newPrompt.trim()) {
-        throw new Error('AI 返回空内容，逆向失败');
+        throw new Error('❌ AI 返回空内容，可能模型拒绝了请求，请调整提示词或更换模型/API');
       }
 
-      // 更新角色 systemPrompt
+      newPrompt = cleanReverseOutput(newPrompt);
+
+      if (!newPrompt.trim()) {
+        throw new Error('❌ 逆向结果清理后为空，请检查提示词或更换模型');
+      }
+
       await updateCharacter(charId, { systemPrompt: newPrompt.trim() });
 
-      // 如果正在编辑该角色，同步更新表单
       if (editingId === charId) {
         setForm((prev) => ({ ...prev, systemPrompt: newPrompt.trim() }));
       }
@@ -229,8 +287,15 @@ export default function CharacterManager() {
       setReverseStatus(`✅ 逆向完成！「${char.name}」的主提示词已更新（${newPrompt.length} 字）`);
       setTimeout(() => setReverseStatus(''), 8000);
     } catch (err: any) {
-      setReverseStatus(`❌ 逆向失败: ${err.message || err}`);
-      setTimeout(() => setReverseStatus(''), 8000);
+      const msg = err?.message || String(err);
+      if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('network') || err?.name === 'TypeError') {
+        setReverseStatus('❌ 网络错误：无法连接到 API 服务，请检查网络或 Base URL 是否正确');
+      } else {
+        setReverseStatus(msg);
+      }
+      setTimeout(() => setReverseStatus(''), 10000);
+    } finally {
+      setReverseLoading(false);
     }
   };
 
@@ -367,10 +432,11 @@ export default function CharacterManager() {
                 <li>逆向结果将<strong>覆盖</strong>当前主提示词</li>
               </ul>
               <Button
-                className="w-full !bg-red-600 hover:!bg-red-500 !text-white font-semibold"
+                className="w-full !bg-red-600 hover:!bg-red-500 !text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={() => handleReverseEngineer(editingId!)}
+                disabled={reverseLoading}
               >
-                ⚠️ 执行高级卡逆向
+                {reverseLoading ? '⏳ 正在逆向，请稍等...' : '⚠️ 执行高级卡逆向'}
               </Button>
             </div>
           )}
@@ -403,6 +469,17 @@ export default function CharacterManager() {
           >
             确认删除
           </Button>
+        </div>
+      </Modal>
+
+      {/* 逆向加载进度 Modal */}
+      <Modal open={reverseLoading} onClose={() => {}} title="⚠️ 高级卡逆向进行中">
+        <div className="flex flex-col items-center gap-4 py-4">
+          <div className="w-10 h-10 border-3 border-red-600/30 border-t-red-500 rounded-full animate-spin" />
+          <p className="text-sm text-slate-300 text-center">
+            正在使用蒸馏模型逆向世界书内容...<br/>
+            <span className="text-xs text-slate-500">请勿关闭窗口或重复点击</span>
+          </p>
         </div>
       </Modal>
     </div>
