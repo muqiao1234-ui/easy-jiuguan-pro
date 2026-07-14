@@ -22,6 +22,7 @@ export const DEFAULT_DISTILLATION_CONFIG: DistillationConfig = {
   concentration: 5,
   autoTrigger: false,
   distillationPrompt: DEFAULT_DISTILLATION_PROMPT,
+  retainRecentCount: 3,
 };
 
 export const DEFAULT_CONTEXT_CONFIG: ContextAssemblyConfig = {

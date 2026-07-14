@@ -176,6 +176,8 @@ export interface DistillationConfig {
   autoTrigger: boolean;
   /** 自定义蒸馏提示词模板，{dialogue} 会被替换为对话文本 */
   distillationPrompt: string;
+  /** 滑动窗口：强制保留最近 N 条消息不参与蒸馏，默认 3 */
+  retainRecentCount: number;
 }
 
 // ===== 上下文拼装 =====

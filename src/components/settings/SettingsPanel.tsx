@@ -191,6 +191,20 @@ export default function SettingsPanel() {
             className="w-full accent-amber-500"
           />
         </div>
+        <div>
+          <label className="block text-xs text-slate-900 dark:text-slate-100 mb-1">
+            滑动窗口 · 保留最近: {state.distillationConfig.retainRecentCount} 条
+          </label>
+          <input
+            type="range" min={0} max={15} step={1}
+            value={state.distillationConfig.retainRecentCount}
+            onChange={(e) => dispatch({ type: 'UPDATE_DISTILLATION_CONFIG', config: { retainRecentCount: parseInt(e.target.value) } })}
+            className="w-full accent-amber-500"
+          />
+          <p className="text-[10px] text-slate-700 dark:text-slate-300 mt-1">
+            触发蒸馏时仅浓缩最旧的对话，最近 {state.distillationConfig.retainRecentCount} 条保持原样作为即时上下文。设为 0 则蒸馏全部（旧行为）。
+          </p>
+        </div>
         <div className="flex items-center justify-between">
           <span className="text-xs text-slate-900 dark:text-slate-100">自动触发蒸馏</span>
           <Toggle

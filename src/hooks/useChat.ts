@@ -48,6 +48,7 @@ export interface UseChatDeps {
   maxWorldBookEntries: number;
   autoTriggerDistillation: boolean;
   triggerThreshold: number;
+  retainRecentCount: number;
   distillationPrompt: string;
   getModelById: (id: string) => Promise<ModelConfig | undefined>;
   addMessageNode: (node: MessageNode) => Promise<void>;
@@ -611,19 +612,27 @@ export function useChat(deps: UseChatDeps) {
 
           // 2. 自动蒸馏（Galgame/scribe 完成后再触发，避免并发）
           if (deps.autoTriggerDistillation && deps.distillModelId) {
-            const newUnarchived = updatedNodes.filter(
-              (n) => !n.isArchived && n.role !== 'distilled' && n.role !== 'system' && n.role !== 'scribe'
-            );
+            const newUnarchived = updatedNodes
+              .filter(
+                (n) => !n.isArchived && n.role !== 'distilled' && n.role !== 'system' && n.role !== 'scribe'
+              )
+              .sort((a, b) => a.timestamp - b.timestamp);
             if (newUnarchived.length >= deps.triggerThreshold) {
-              await deps.performDistillation({
-                nodes: newUnarchived,
-                distillModelId: deps.distillModelId,
-                distillationPrompt: deps.distillationPrompt,
-                tplDistilledNodePrefix: deps.tplDistilledNodePrefix,
-                getModelById: deps.getModelById,
-                addMessageNode: deps.addMessageNode,
-                batchUpdateNodes: deps.batchUpdateNodes,
-              });
+              // 滑动窗口：只蒸馏最旧的 (总数 - retainRecentCount) 条，
+              // 最近 retainRecentCount 条保持 isArchived: false 作为下一轮即时上下文
+              const retain = Math.max(0, deps.retainRecentCount ?? 0);
+              const toDistill = newUnarchived.slice(0, newUnarchived.length - retain);
+              if (toDistill.length > 0) {
+                await deps.performDistillation({
+                  nodes: toDistill,
+                  distillModelId: deps.distillModelId,
+                  distillationPrompt: deps.distillationPrompt,
+                  tplDistilledNodePrefix: deps.tplDistilledNodePrefix,
+                  getModelById: deps.getModelById,
+                  addMessageNode: deps.addMessageNode,
+                  batchUpdateNodes: deps.batchUpdateNodes,
+                });
+              }
             }
           }
         })().catch(console.error);
@@ -854,19 +863,28 @@ export function useChat(deps: UseChatDeps) {
     }
     try {
       const allNodes = await deps.getNodesByConversation(deps.conversationId);
-      const unarchived = allNodes.filter(
-        (n) =>
-          !n.isArchived &&
-          n.role !== 'distilled' &&
-          n.role !== 'system' &&
-          n.role !== 'scribe'
-      );
+      const unarchived = allNodes
+        .filter(
+          (n) =>
+            !n.isArchived &&
+            n.role !== 'distilled' &&
+            n.role !== 'system' &&
+            n.role !== 'scribe'
+        )
+        .sort((a, b) => a.timestamp - b.timestamp);
       if (unarchived.length === 0) {
         setError('无可蒸馏的对话');
         return;
       }
+      // 滑动窗口：手动蒸馏也保留最近 retainRecentCount 条
+      const retain = Math.max(0, deps.retainRecentCount ?? 0);
+      const toDistill = unarchived.slice(0, unarchived.length - retain);
+      if (toDistill.length === 0) {
+        setError(`保留太少消息可用于蒸馏（当前 ${unarchived.length} 条，需保留 ${retain} 条）`);
+        return;
+      }
       await deps.performDistillation({
-        nodes: unarchived,
+        nodes: toDistill,
         distillModelId: deps.distillModelId,
         distillationPrompt: deps.distillationPrompt,
         tplDistilledNodePrefix: deps.tplDistilledNodePrefix,
