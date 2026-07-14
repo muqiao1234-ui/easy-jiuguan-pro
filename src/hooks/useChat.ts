@@ -37,6 +37,7 @@ export interface UseChatDeps {
   scribeModelId: string | null;
   scribeEnabled: boolean;
   scribeTriggerInterval: number;
+  scribeRounds: number;
   scribeMode: ScribeMode;
   scribeEngine: ScribeEngine;
   galgamePrompt: string;
@@ -108,20 +109,46 @@ export function useChat(deps: UseChatDeps) {
         const model = await deps.getModelById(deps.scribeModelId);
         if (!model) throw new Error('状态书模型未找到');
 
-        // 构建纯对话文本（按时间正序，仅 user/charA/charB）
         const sorted = [...recentNodes].sort((a, b) => a.timestamp - b.timestamp);
-        const dialogueText = sorted
-          .filter((n) => n.role === 'user' || n.role === 'charA' || n.role === 'charB')
-          .map((n) => `${n.senderName}: ${n.content}`)
-          .join('\n\n');
+        const dialogueNodes = sorted.filter(
+          (n) => n.role === 'user' || n.role === 'charA' || n.role === 'charB'
+        );
+        if (dialogueNodes.length === 0) return;
 
-        if (!dialogueText.trim()) return;
+        const scribePrompt = deps.scribeSystemPrompt || SCRIBE_SYSTEM_PROMPT;
+        const rounds = Math.max(2, deps.scribeRounds || 4); // 最低 2 轮，默认 4
 
-        // 绝对隔离：仅 system prompt + 纯对话
-        const messages = [
-          { role: 'system' as const, content: deps.scribeSystemPrompt || SCRIBE_SYSTEM_PROMPT },
-          { role: 'user' as const, content: dialogueText },
-        ];
+        // 获取历史状态书（取最近 scribeUpdate 有值的节点，最少 1 个，用于格式继承）
+        const previousScribes = sorted
+          .filter((n) => (n.role === 'charA' || n.role === 'charB') && n.scribeUpdate?.isEnabled && n.scribeUpdate.rawText?.trim())
+          .slice(-rounds); // 数量和对话轮数一致，避免过多
+
+        // 构建 messages: system 开头 → 历史状态书 → 逐轮对话 user → system 结尾
+        const messages: Array<{ role: 'system' | 'user'; content: string }> = [];
+        messages.push({ role: 'system', content: scribePrompt });
+
+        // 注入历史状态书（格式继承）
+        for (const s of previousScribes) {
+          messages.push({ role: 'system', content: `[上一次状态书格式参考]\n${s.scribeUpdate!.rawText}` });
+        }
+
+        // 拆分为 N 轮，每轮一条 user 消息
+        // 每轮对话 ≈ 2条消息（user消息 + AI回复），但也有可能3条（user + charA + charB）
+        // 按消息数均分到 N 组
+        const total = dialogueNodes.length;
+        const groupSize = Math.max(1, Math.ceil(total / rounds));
+        for (let i = 0; i < total; i += groupSize) {
+          const chunk = dialogueNodes.slice(i, i + groupSize);
+          const chunkText = chunk
+            .map((n) => `${n.senderName}: ${n.content}`)
+            .join('\n');
+          if (chunkText.trim()) {
+            messages.push({ role: 'user', content: chunkText });
+          }
+        }
+
+        // 结尾重复 system prompt，提升执行力
+        messages.push({ role: 'system', content: scribePrompt });
 
         const resp = await apiFetch(model.baseUrl, {
           method: 'POST',
@@ -133,6 +160,7 @@ export function useChat(deps: UseChatDeps) {
             model: model.defaultModel,
             messages,
             stream: false,
+            max_tokens: 1000,
             ...buildSamplingParams(model.temperature, model.topP),
           }),
         });
@@ -143,7 +171,6 @@ export function useChat(deps: UseChatDeps) {
         const newScribeContent = data.choices?.[0]?.message?.content || '';
 
         if (newScribeContent.trim()) {
-          // 属性化：将状态书内容绑定到目标 assistant 节点
           await deps.updateMessageNode(targetAssistantNodeId, {
             scribeUpdate: {
               rawText: newScribeContent,
@@ -152,7 +179,6 @@ export function useChat(deps: UseChatDeps) {
             },
           });
 
-          // 刷新节点列表
           const updatedNodes = await deps.getNodesByConversation(deps.conversationId);
           deps.onNodesRefresh(updatedNodes);
         }

@@ -346,6 +346,22 @@ export default function SettingsPanel() {
                 className="w-full accent-green-500"
               />
             </div>
+
+            <div>
+              <label className="block text-xs text-slate-900 dark:text-slate-100 mb-1">
+                📝 每次总结的对话轮数: {state.scribeRounds}
+              </label>
+              <input
+                type="range" min={2} max={10} step={1}
+                value={state.scribeRounds}
+                onChange={(e) => dispatch({ type: 'SET_SCRIBE_ROUNDS', rounds: parseInt(e.target.value) })}
+                className="w-full accent-amber-500"
+              />
+              <p className="text-[10px] text-slate-700 dark:text-slate-300 mt-1">
+                控制书记官一次性"看见"多少轮对话，对话拆分为逐轮 user 消息，
+                并注入历史状态书格式供 AI 继承。调高可让状态书更像"天意系统"。
+              </p>
+            </div>
           </>
         )}
       </div>

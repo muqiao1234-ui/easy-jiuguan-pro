@@ -256,6 +256,8 @@ export interface AppState {
   scribeInterval: number;
   /** 状态书 AI 自动总结触发间隔（每 N 轮触发一次），默认 5 */
   scribeTriggerInterval: number;
+  /** 每次状态书总结的对话轮数（默认 4，最低 2），对话拆分为逐轮 user 消息 */
+  scribeRounds: number;
   /** 第三书记员自定义 System Prompt */
   scribeSystemPrompt: string;
   /** 状态书插入策略模式 */
@@ -305,6 +307,7 @@ export type AppAction =
   | { type: 'SET_SCRIBE_ENABLED'; enabled: boolean }
   | { type: 'SET_SCRIBE_INTERVAL'; interval: number }
   | { type: 'SET_SCRIBE_TRIGGER_INTERVAL'; interval: number }
+  | { type: 'SET_SCRIBE_ROUNDS'; rounds: number }
   | { type: 'SET_SCRIBE_SYSTEM_PROMPT'; prompt: string }
   | { type: 'SET_SCRIBE_MODE'; mode: ScribeMode }
   | { type: 'SET_SCRIBE_ENGINE'; engine: ScribeEngine }

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useReducer, useEffect } from 'react';
 import type { AppState, AppAction } from '../types';
-import { DEFAULT_DISTILLATION_CONFIG, DEFAULT_CONTEXT_CONFIG, DEFAULT_SCRIBE_TRIGGER_INTERVAL, SCRIBE_SYSTEM_PROMPT } from '../utils/constants';
+import { DEFAULT_DISTILLATION_CONFIG, DEFAULT_CONTEXT_CONFIG, DEFAULT_SCRIBE_TRIGGER_INTERVAL, DEFAULT_SCRIBE_ROUNDS, SCRIBE_SYSTEM_PROMPT } from '../utils/constants';
 import { setLowRateMode } from '../utils/apiFetch';
 import * as Stores from '../db/stores';
 
@@ -22,6 +22,7 @@ const initialState: AppState = {
   scribeEnabled: true,
   scribeInterval: 1,
   scribeTriggerInterval: DEFAULT_SCRIBE_TRIGGER_INTERVAL,
+  scribeRounds: DEFAULT_SCRIBE_ROUNDS,
   scribeSystemPrompt: SCRIBE_SYSTEM_PROMPT,
   scribeMode: 'auto',
   scribeEngine: 'text',
@@ -93,6 +94,8 @@ function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, scribeInterval: action.interval };
     case 'SET_SCRIBE_TRIGGER_INTERVAL':
       return { ...state, scribeTriggerInterval: action.interval };
+    case 'SET_SCRIBE_ROUNDS':
+      return { ...state, scribeRounds: action.rounds };
     case 'SET_SCRIBE_SYSTEM_PROMPT':
       return { ...state, scribeSystemPrompt: action.prompt };
     case 'SET_SCRIBE_MODE':
@@ -190,6 +193,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (settings.scribeEnabled !== undefined) {
           dispatch({ type: 'SET_SCRIBE_ENABLED', enabled: settings.scribeEnabled });
         }
+        if (settings.scribeRounds !== undefined) {
+          dispatch({ type: 'SET_SCRIBE_ROUNDS', rounds: settings.scribeRounds });
+        }
         if (settings.lowRateMode !== undefined) {
           dispatch({ type: 'SET_LOW_RATE_MODE', enabled: settings.lowRateMode });
         }
@@ -232,13 +238,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       thinkingEnabled: state.thinkingEnabled,
       debugMode: state.debugMode,
       scribeEnabled: state.scribeEnabled,
+      scribeRounds: state.scribeRounds,
       lowRateMode: state.lowRateMode,
     });
   }, [state.theme, state.wallpaper, state.boldColorize, state.scribeEngine, state.scribeMode, state.galgamePrompt, state.mutualObservePrompt,
     state.tplUserWrapper, state.tplOtherCharWrapper, state.tplIdentityAnchor, state.tplWorldBookPrefix,
     state.tplDistilledPrefix, state.tplStateBookPrefix, state.tplEavesdropAppend, state.tplGalgameCharInjection,
     state.tplImplantMemoryPrefix, state.tplImplantScribePrefix, state.tplDistilledNodePrefix, state.tplReverseEngineer,
-    state.thinkingEnabled, state.debugMode, state.scribeEnabled, state.lowRateMode]);
+    state.thinkingEnabled, state.debugMode, state.scribeEnabled, state.scribeRounds, state.lowRateMode]);
 
   // 低速率模式变化时同步到 apiFetch 模块
   useEffect(() => {

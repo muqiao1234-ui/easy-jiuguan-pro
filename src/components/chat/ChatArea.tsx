@@ -234,6 +234,7 @@ export default function ChatArea({
     scribeModelId: localScribeConfig.scribeModelId || state.currentScribeModelId,
     scribeEnabled: localScribeConfig.scribeEnabled,
     scribeTriggerInterval: localScribeConfig.scribeTriggerInterval,
+    scribeRounds: state.scribeRounds,
     scribeMode: state.scribeMode,
     scribeEngine: state.scribeEngine,
     galgamePrompt: state.galgamePrompt,

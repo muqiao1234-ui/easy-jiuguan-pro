@@ -33,6 +33,9 @@ export const DEFAULT_CONTEXT_CONFIG: ContextAssemblyConfig = {
 /** 状态书 AI 自动总结触发间隔（默认 5 轮） */
 export const DEFAULT_SCRIBE_TRIGGER_INTERVAL = 5;
 
+/** 状态书每次总结的对话轮数（默认 4，最低 2） */
+export const DEFAULT_SCRIBE_ROUNDS = 4;
+
 /** 第三书记员 System Prompt — 上下文绝对隔离，仅接收纯对话文本 */
 export const SCRIBE_SYSTEM_PROMPT =
   '你是不参与对话的独立客观书记官。请根据以下最近的对话内容，冷酷、客观地更新并精简当前的环境状态、时间、地点、交互物品状态及角色间的好感度变化。不要输出任何对话，仅输出最新的状态面板。';

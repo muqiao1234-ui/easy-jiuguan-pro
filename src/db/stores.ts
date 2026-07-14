@@ -377,6 +377,7 @@ export interface UISettings {
   thinkingEnabled?: boolean;
   debugMode?: boolean;
   scribeEnabled?: boolean;
+  scribeRounds?: number;
   lowRateMode?: boolean;
   // 高级提示词模板（空=用默认）
   tplUserWrapper?: string;
@@ -422,6 +423,7 @@ export async function setUISettings(settings: Partial<UISettings>): Promise<void
         thinkingEnabled: settings.thinkingEnabled ?? existing.thinkingEnabled,
         debugMode: settings.debugMode ?? existing.debugMode,
         scribeEnabled: settings.scribeEnabled ?? existing.scribeEnabled,
+        scribeRounds: settings.scribeRounds ?? existing.scribeRounds,
         lowRateMode: settings.lowRateMode ?? existing.lowRateMode,
         tplUserWrapper: settings.tplUserWrapper ?? existing.tplUserWrapper,
         tplOtherCharWrapper: settings.tplOtherCharWrapper ?? existing.tplOtherCharWrapper,
