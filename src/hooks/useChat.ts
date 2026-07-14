@@ -160,7 +160,6 @@ export function useChat(deps: UseChatDeps) {
             model: model.defaultModel,
             messages,
             stream: false,
-            max_tokens: 1000,
             ...buildSamplingParams(model.temperature, model.topP),
           }),
         });
