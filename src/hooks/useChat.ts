@@ -168,6 +168,7 @@ export function useChat(deps: UseChatDeps) {
 
         const data = await resp.json();
         const newScribeContent = data.choices?.[0]?.message?.content || '';
+        const scribeTokenCost = data.usage?.total_tokens || undefined;
 
         if (newScribeContent.trim()) {
           await deps.updateMessageNode(targetAssistantNodeId, {
@@ -176,6 +177,7 @@ export function useChat(deps: UseChatDeps) {
               isEnabled: true,
               mode,
             },
+            ...(scribeTokenCost !== undefined ? { scribeTokenCost } : {}),
           });
 
           const updatedNodes = await deps.getNodesByConversation(deps.conversationId);
@@ -306,8 +308,13 @@ export function useChat(deps: UseChatDeps) {
           if (!galgameData.name || galgameData.name === '未知') {
             galgameData.name = charName;
           }
-          console.log('[Galgame] 解析成功, 写入节点: %s', targetAssistantNodeId, galgameData);
-          await deps.updateMessageNode(targetAssistantNodeId, { galgameData });
+          // 捕获状态书引擎单独消耗的 token
+          const scribeTokenCost = data.usage?.total_tokens || undefined;
+          console.log('[Galgame] 解析成功, 写入节点: %s, scribeTokenCost=%s', targetAssistantNodeId, scribeTokenCost);
+          await deps.updateMessageNode(targetAssistantNodeId, {
+            galgameData,
+            ...(scribeTokenCost !== undefined ? { scribeTokenCost } : {}),
+          });
           const updatedNodes = await deps.getNodesByConversation(deps.conversationId);
           deps.onNodesRefresh(updatedNodes);
         } else {

@@ -332,6 +332,11 @@ export default function MessageBubble({
                 )}
               </span>
             )}
+            {isAIChar && node.scribeTokenCost !== undefined && (
+              <span className="ml-2 font-mono text-[10px] text-amber-500/70 dark:text-amber-600/50">
+                📜 状态书 {node.scribeTokenCost.toLocaleString()} Tokens
+              </span>
+            )}
             {isUser && node.activatedWorldBookEntries && node.activatedWorldBookEntries.length > 0 && (
               <span className="ml-2">
                 激活世界书: {node.activatedWorldBookEntries.map((e) => e.name).join(' \\ ')} · 预估 token {node.tokenEstimate ?? '-'}

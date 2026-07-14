@@ -103,6 +103,8 @@ export interface MessageNode {
   tokenCostInput?: number;
   /** 总 token 数（input + output），用于直观显示 */
   tokenCostTotal?: number;
+  /** 状态书/Galgame 引擎单独消耗的 token 数（独立 API 调用） */
+  scribeTokenCost?: number;
 }
 
 /** 世界书（World Book）条目 */
