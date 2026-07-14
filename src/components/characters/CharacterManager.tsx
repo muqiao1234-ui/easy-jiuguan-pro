@@ -99,15 +99,17 @@ export default function CharacterManager() {
   const [importStatus, setImportStatus] = useState<string>('');
   const [exportStatus, setExportStatus] = useState<string>('');
   const [reverseStatus, setReverseStatus] = useState<string>('');
+  const [reverseError, setReverseError] = useState<string>('');
 
   useEffect(() => { loadCharacters(); loadWorldBooks(); }, [loadCharacters, loadWorldBooks]);
 
-  const openAdd = () => { setEditingId(null); setForm({ name: '', systemPrompt: '', avatar: '🤖', worldBookId: '' }); setShowModal(true); };
+  const openAdd = () => { setEditingId(null); setForm({ name: '', systemPrompt: '', avatar: '🤖', worldBookId: '' }); setReverseError(''); setShowModal(true); };
   const openEdit = (id: string) => {
     const c = characters.find((x) => x.id === id);
     if (!c) return;
     setEditingId(id);
     setForm({ name: c.name, systemPrompt: c.systemPrompt, avatar: c.avatar, worldBookId: c.worldBookId || '' });
+    setReverseError('');
     setShowModal(true);
   };
 
@@ -200,9 +202,10 @@ export default function CharacterManager() {
     const char = characters.find((c) => c.id === charId);
     if (!char) return;
 
+    setReverseError('');
+
     if (!state.currentDistillModelId) {
-      setReverseStatus('❌ 请先在设置中配置蒸馏 AI 模型');
-      setTimeout(() => setReverseStatus(''), 8000);
+      setReverseError('❌ 请先在设置中配置蒸馏 AI 模型');
       return;
     }
 
@@ -211,8 +214,8 @@ export default function CharacterManager() {
 
     try {
       const model = await Stores.getModelById(state.currentDistillModelId);
-      if (!model) throw new Error('❌ 蒸馏模型未找到，请检查设置');
-      if (!model.apiKey) throw new Error('❌ 蒸馏模型未配置 API Key，请先在模型管理中填写');
+      if (!model) { setReverseError('❌ 蒸馏模型未找到，请检查设置'); return; }
+      if (!model.apiKey) { setReverseError('❌ 蒸馏模型未配置 API Key，请先在模型管理中填写'); return; }
 
       let worldBookText = '';
       if (char.worldBookId) {
@@ -245,6 +248,8 @@ export default function CharacterManager() {
           stream: false,
           temperature: model.temperature ?? 0.8,
           top_p: model.topP ?? 0.95,
+          // 默认开启思考模式提升逆向智力
+          reasoning_effort: 'medium',
         }),
       });
 
@@ -285,15 +290,15 @@ export default function CharacterManager() {
       }
 
       setReverseStatus(`✅ 逆向完成！「${char.name}」的主提示词已更新（${newPrompt.length} 字）`);
+      setReverseError('');
       setTimeout(() => setReverseStatus(''), 8000);
     } catch (err: any) {
       const msg = err?.message || String(err);
       if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('network') || err?.name === 'TypeError') {
-        setReverseStatus('❌ 网络错误：无法连接到 API 服务，请检查网络或 Base URL 是否正确');
+        setReverseError('❌ 网络错误：无法连接到 API 服务，请检查网络或 Base URL 是否正确');
       } else {
-        setReverseStatus(msg);
+        setReverseError(msg);
       }
-      setTimeout(() => setReverseStatus(''), 10000);
     } finally {
       setReverseLoading(false);
     }
@@ -438,6 +443,11 @@ export default function CharacterManager() {
               >
                 {reverseLoading ? '⏳ 正在逆向，请稍等...' : '⚠️ 执行高级卡逆向'}
               </Button>
+              {reverseError && (
+                <div className="bg-red-900/40 border border-red-500/50 rounded-md p-2">
+                  <p className="text-[10px] text-red-300 leading-relaxed">{reverseError}</p>
+                </div>
+              )}
             </div>
           )}
           <div className="flex justify-end gap-2 pt-2">
