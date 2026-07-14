@@ -307,11 +307,28 @@ export default function MessageBubble({
           <div className={`text-[10px] text-slate-400 dark:text-slate-500 mt-0.5 ${isUser ? 'text-right' : 'text-left'}`}>
             {new Date(node.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             {isAIChar && node.tokenCost !== undefined && (
-              <span className="ml-2 font-mono text-[10px] text-slate-400 dark:text-slate-600">
-                {node.tokenCostIsExact ? (
-                  <span>✨ {node.tokenCost} Tokens</span>
-                ) : (
-                  <span>⚡ Est. {node.tokenCost} Tokens</span>
+              <span className="ml-2 font-mono text-[10px] text-slate-400 dark:text-slate-600 relative group/token cursor-help">
+                {/* 默认显示：总 token（输入+输出） */}
+                {(() => {
+                  const total = node.tokenCostTotal ?? node.tokenCost;
+                  const isExact = node.tokenCostIsExact;
+                  const icon = isExact ? '✨' : '⚡';
+                  const label = isExact ? '' : ' Est.';
+                  return <span>{icon}{label} {total?.toLocaleString()} Tokens</span>;
+                })()}
+                {/* Hover / 长按浮窗：明细 */}
+                {(node.tokenCostInput !== undefined || node.tokenCostTotal !== undefined) && (
+                  <span className="hidden group-hover/token:block absolute bottom-full left-0 z-50 mb-1 px-2.5 py-1.5 bg-slate-900 dark:bg-slate-800 border border-slate-600/50 rounded-lg shadow-xl whitespace-nowrap text-[10px]">
+                    <span className="block text-slate-300">
+                      📥 提示词(入): <span className="font-mono text-cyan-400">{(node.tokenCostInput ?? 0).toLocaleString()}</span>
+                    </span>
+                    <span className="block text-slate-300">
+                      📤 回复(出): <span className="font-mono text-emerald-400">{(node.tokenCost ?? 0).toLocaleString()}</span>
+                    </span>
+                    <span className="block text-slate-300 border-t border-slate-600/30 mt-1 pt-1">
+                      🪙 单条总计: <span className="font-mono text-amber-400">{(node.tokenCostTotal ?? node.tokenCost ?? 0).toLocaleString()}</span>
+                    </span>
+                  </span>
                 )}
               </span>
             )}

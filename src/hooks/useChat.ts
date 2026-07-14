@@ -522,12 +522,19 @@ export function useChat(deps: UseChatDeps) {
         // 计算本消息的 Token 消耗: 优先从 API usage 获取精确值，否则暴力估计
         let tokenCost: number;
         let tokenCostIsExact: boolean;
+        let tokenCostInput: number | undefined;
+        let tokenCostTotal: number | undefined;
         if (parser.tokenUsage && parser.tokenUsage.completion_tokens > 0) {
           tokenCost = parser.tokenUsage.completion_tokens;
           tokenCostIsExact = true;
+          tokenCostInput = parser.tokenUsage.prompt_tokens || undefined;
+          tokenCostTotal = parser.tokenUsage.total_tokens || (tokenCostInput ? tokenCostInput + tokenCost : undefined);
         } else {
           tokenCost = Math.ceil(fullContent.length * 0.5);
           tokenCostIsExact = false;
+          // 无 API 精确值时，用上下文估算的输入 token
+          tokenCostInput = assembled.metadata.tokenEstimate || undefined;
+          tokenCostTotal = tokenCostInput ? tokenCostInput + tokenCost : undefined;
         }
 
         const aiNode: MessageNode = {
@@ -540,6 +547,8 @@ export function useChat(deps: UseChatDeps) {
           timestamp: Date.now(),
           tokenCost,
           tokenCostIsExact,
+          tokenCostInput,
+          tokenCostTotal,
         };
         await deps.addMessageNode(aiNode);
 
@@ -743,12 +752,18 @@ export function useChat(deps: UseChatDeps) {
 
       let tokenCost: number;
       let tokenCostIsExact: boolean;
+      let tokenCostInput: number | undefined;
+      let tokenCostTotal: number | undefined;
       if (parser.tokenUsage && parser.tokenUsage.completion_tokens > 0) {
         tokenCost = parser.tokenUsage.completion_tokens;
         tokenCostIsExact = true;
+        tokenCostInput = parser.tokenUsage.prompt_tokens || undefined;
+        tokenCostTotal = parser.tokenUsage.total_tokens || (tokenCostInput ? tokenCostInput + tokenCost : undefined);
       } else {
         tokenCost = Math.ceil(fullContent.length * 0.5);
         tokenCostIsExact = false;
+        tokenCostInput = assembled.metadata.tokenEstimate || undefined;
+        tokenCostTotal = tokenCostInput ? tokenCostInput + tokenCost : undefined;
       }
 
       const node: MessageNode = {
@@ -761,6 +776,8 @@ export function useChat(deps: UseChatDeps) {
         timestamp: Date.now(),
         tokenCost,
         tokenCostIsExact,
+        tokenCostInput,
+        tokenCostTotal,
       };
       await deps.addMessageNode(node);
 

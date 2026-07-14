@@ -99,6 +99,10 @@ export interface MessageNode {
   tokenCost?: number;
   /** tokenCost 是否来自 API 原生返回（true=精确值，false/undefined=暴力估计） */
   tokenCostIsExact?: boolean;
+  /** 输入 token 数（prompt tokens），来自 API usage 或上下文估算 */
+  tokenCostInput?: number;
+  /** 总 token 数（input + output），用于直观显示 */
+  tokenCostTotal?: number;
 }
 
 /** 世界书（World Book）条目 */
