@@ -56,7 +56,6 @@ export default function CharacterManager() {
   const importRef = useRef<HTMLInputElement>(null);
   const [importStatus, setImportStatus] = useState<string>('');
   const [exportStatus, setExportStatus] = useState<string>('');
-  const [reverseConfirmId, setReverseConfirmId] = useState<string | null>(null);
   const [reverseStatus, setReverseStatus] = useState<string>('');
 
   useEffect(() => { loadCharacters(); loadWorldBooks(); }, [loadCharacters, loadWorldBooks]);
@@ -156,7 +155,6 @@ export default function CharacterManager() {
   const handleReverseEngineer = async (charId: string) => {
     const char = characters.find((c) => c.id === charId);
     if (!char) return;
-    setReverseConfirmId(null);
 
     // 检查蒸馏模型是否已配置
     if (!state.currentDistillModelId) {
@@ -223,6 +221,11 @@ export default function CharacterManager() {
       // 更新角色 systemPrompt
       await updateCharacter(charId, { systemPrompt: newPrompt.trim() });
 
+      // 如果正在编辑该角色，同步更新表单
+      if (editingId === charId) {
+        setForm((prev) => ({ ...prev, systemPrompt: newPrompt.trim() }));
+      }
+
       setReverseStatus(`✅ 逆向完成！「${char.name}」的主提示词已更新（${newPrompt.length} 字）`);
       setTimeout(() => setReverseStatus(''), 8000);
     } catch (err: any) {
@@ -274,20 +277,8 @@ export default function CharacterManager() {
                 <span className="text-xl">{c.avatar}</span>
               )}
               <span className="text-sm font-medium text-slate-200">{c.name}</span>
-              {c.worldBookId && (
-                <span className="text-[9px] px-1 py-0.5 bg-amber-600/20 text-amber-400 rounded-full">有世界书</span>
-              )}
             </div>
             <div className="flex items-center gap-1">
-              {c.worldBookId && (
-                <button
-                  onClick={() => setReverseConfirmId(c.id)}
-                  className="text-red-500 hover:text-red-400 p-0.5"
-                  title="⚠️ 高级卡逆向 — 将世界书逆向为主提示词（消耗 Token）"
-                >
-                  <Icon name="distill" size={14} />
-                </button>
-              )}
               <button onClick={() => handleExportCard(c.id)} className="text-slate-500 hover:text-amber-400 p-0.5" title="导出为酒馆格式 JSON"><Icon name="branch" size={14} /></button>
               <button onClick={() => openEdit(c.id)} className="text-slate-500 hover:text-slate-300 p-0.5"><Icon name="edit" size={14} /></button>
               <button onClick={() => setDeleteConfirmId(c.id)} className="text-slate-500 hover:text-red-400 p-0.5"><Icon name="trash" size={14} /></button>
@@ -361,6 +352,28 @@ export default function CharacterManager() {
             <label className="block text-xs text-slate-400 mb-1">绑定世界书</label>
             <Dropdown options={wbOptions} value={form.worldBookId} onChange={(v) => setForm({ ...form, worldBookId: v })} placeholder="无世界书" />
           </div>
+
+          {/* 高级卡逆向 — 仅编辑模式 + 已绑定世界书时显示 */}
+          {editingId && form.worldBookId && (
+            <div className="bg-red-900/20 border border-red-600/40 rounded-lg p-3 space-y-2">
+              <h4 className="text-xs font-semibold text-red-400">⚠️ 高级卡逆向</h4>
+              <p className="text-[10px] text-red-300/80 leading-relaxed">
+                此功能适用于<strong>主提示词空白、系统和剧情全在世界书里</strong>的高级卡。将使用蒸馏模型将世界书内容逆向串联为主角色提示词。
+              </p>
+              <ul className="text-[10px] text-red-300/80 space-y-0.5 list-disc list-inside">
+                <li>普通卡<strong>无需使用</strong>，逆向需要花费 Token</li>
+                <li>极度建议在一些空白高级卡上使用</li>
+                <li>不保证 100% 还原，效率约 60%-80%</li>
+                <li>逆向结果将<strong>覆盖</strong>当前主提示词</li>
+              </ul>
+              <Button
+                className="w-full !bg-red-600 hover:!bg-red-500 !text-white font-semibold"
+                onClick={() => handleReverseEngineer(editingId!)}
+              >
+                ⚠️ 执行高级卡逆向
+              </Button>
+            </div>
+          )}
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="secondary" onClick={() => setShowModal(false)}>取消</Button>
             <Button onClick={handleSave}>{editingId ? '保存' : '添加'}</Button>
@@ -389,47 +402,6 @@ export default function CharacterManager() {
             }}
           >
             确认删除
-          </Button>
-        </div>
-      </Modal>
-
-      {/* Reverse engineer confirmation modal */}
-      <Modal
-        open={!!reverseConfirmId}
-        onClose={() => setReverseConfirmId(null)}
-        title="⚠️ 高级卡逆向"
-      >
-        <div className="space-y-3">
-          <div className="bg-red-900/30 border border-red-600/40 rounded-lg p-3 space-y-2">
-            <p className="text-xs text-red-300 font-semibold">
-              ⚠️ 警告：此操作将消耗 Token 调用蒸馏模型
-            </p>
-            <p className="text-xs text-red-200/80 leading-relaxed">
-              逆向功能适用于<strong>主提示词空白、系统和剧情全在世界书里</strong>的高级卡。
-              将使用<strong>蒸馏模型</strong>（当前：
-              {state.currentDistillModelId ? '已配置' : '❌ 未配置'}
-              ）将世界书内容逆向串联为主角色提示词。
-            </p>
-            <p className="text-xs text-red-200/80 leading-relaxed">
-              • 普通卡无需使用，逆向需要花费 Token<br/>
-              • 极度建议在一些空白高级卡上使用<br/>
-              • 不保证 100% 还原，效率约 60%-80%<br/>
-              • 逆向结果将<strong>覆盖</strong>当前主提示词
-            </p>
-          </div>
-          <p className="text-sm text-slate-300">
-            确定要对角色「{characters.find((c) => c.id === reverseConfirmId)?.name || ''}」进行逆向吗？
-          </p>
-        </div>
-        <div className="flex justify-end gap-2 mt-4">
-          <Button variant="secondary" onClick={() => setReverseConfirmId(null)}>取消</Button>
-          <Button
-            className="!bg-red-600 hover:!bg-red-500"
-            onClick={() => {
-              if (reverseConfirmId) handleReverseEngineer(reverseConfirmId);
-            }}
-          >
-            确认逆向
           </Button>
         </div>
       </Modal>
