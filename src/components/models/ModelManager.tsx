@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useModels } from '../../hooks/useModels';
 import { useApp } from '../../hooks/useApp';
+import { SAMPLING_NONE } from '../../utils/constants';
 import Button from '../ui/Button';
 import Modal from '../ui/Modal';
 import Icon from '../ui/Icon';
 
 /** 采样参数预设 */
-type PresetKey = 'creative' | 'balanced' | 'strict';
+type PresetKey = 'creative' | 'balanced' | 'strict' | 'none';
 
 interface Preset {
   key: PresetKey;
@@ -37,6 +38,13 @@ const PRESETS: Preset[] = [
     desc: '低随机性 + 低创意，输出稳定可预测，适合事实问答、代码、严谨任务',
     temperature: 0.3,
     topP: 0.85,
+  },
+  {
+    key: 'none',
+    label: '🔄 无设置',
+    desc: '不传采样参数，兼容无需采样设置的高级模型（GPT-5.1、Claude 4 等）',
+    temperature: SAMPLING_NONE,
+    topP: SAMPLING_NONE,
   },
 ];
 
@@ -120,6 +128,8 @@ export default function ModelManager() {
   const presetBadge = (m: { temperature?: number; topP?: number }): { label: string; color: string } => {
     const t = m.temperature ?? 0.8;
     const p = m.topP ?? 0.92;
+    // 无设置模式：temperature 和 topP 均为 -1 表示不传采样参数
+    if (t === SAMPLING_NONE && p === SAMPLING_NONE) return { label: '🔄 无设置', color: 'text-slate-400' };
     if (t >= 1.0) return { label: '🎨 异想天开', color: 'text-fuchsia-400' };
     if (t <= 0.5) return { label: '📐 严格规矩', color: 'text-sky-400' };
     return { label: '⚖️ 中规中矩', color: 'text-emerald-400' };
@@ -148,7 +158,11 @@ export default function ModelManager() {
             <div className="flex items-center gap-3 text-[10px] text-slate-700 dark:text-slate-300">
               <span>最大上下文: {(m.maxContextTokens || 4000).toLocaleString()} tokens</span>
               <span className={badge.color}>{badge.label}</span>
-              <span className="text-slate-700 dark:text-slate-300">T={(m.temperature ?? 0.8).toFixed(1)} P={(m.topP ?? 0.92).toFixed(2)}</span>
+              {m.temperature === SAMPLING_NONE && m.topP === SAMPLING_NONE ? (
+                <span className="text-slate-500">不传采样参数</span>
+              ) : (
+                <span className="text-slate-700 dark:text-slate-300">T={(m.temperature ?? 0.8).toFixed(1)} P={(m.topP ?? 0.92).toFixed(2)}</span>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <Button size="sm" variant="secondary" onClick={() => pingModel(m.id)} loading={pinging[m.id]}>
@@ -201,7 +215,7 @@ export default function ModelManager() {
           {/* ===== 采样参数预设 ===== */}
           <div className="border-t border-slate-700/50 pt-3">
             <label className="block text-xs text-slate-900 dark:text-slate-100 mb-2">采样参数预设</label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-4 gap-2">
               {PRESETS.map((p) => {
                 const active = matchedPreset() === p.key;
                 return (

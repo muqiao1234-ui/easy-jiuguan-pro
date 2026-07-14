@@ -14,7 +14,7 @@ import type {
 import { SSEParser } from '../utils/sse';
 import { assembleContext, calcWorldBookCooldown } from '../utils/context';
 import { generateId } from '../utils/id';
-import { SCRIBE_SYSTEM_PROMPT, DEFAULT_TPL_GALGAME_CHAR_INJECTION, DEFAULT_TPL_EAVESDROP_APPEND, DEFAULT_TPL_IMPLANT_MEMORY_PREFIX, DEFAULT_TPL_IMPLANT_SCRIBE_PREFIX, DEFAULT_TPL_DISTILLED_NODE_PREFIX } from '../utils/constants';
+import { SCRIBE_SYSTEM_PROMPT, DEFAULT_TPL_GALGAME_CHAR_INJECTION, DEFAULT_TPL_EAVESDROP_APPEND, DEFAULT_TPL_IMPLANT_MEMORY_PREFIX, DEFAULT_TPL_IMPLANT_SCRIBE_PREFIX, DEFAULT_TPL_DISTILLED_NODE_PREFIX, buildSamplingParams } from '../utils/constants';
 import {
   GALGAME_TRIGGER_INTERVAL,
   GALGAME_MAX_TOKENS,
@@ -133,8 +133,7 @@ export function useChat(deps: UseChatDeps) {
             model: model.defaultModel,
             messages,
             stream: false,
-            temperature: model.temperature ?? 0.8,
-            top_p: model.topP ?? 0.95,
+            ...buildSamplingParams(model.temperature, model.topP),
           }),
         });
 
@@ -464,8 +463,7 @@ export function useChat(deps: UseChatDeps) {
             model: model.defaultModel,
             messages: assembled.messages,
             stream: true,
-            temperature: model.temperature ?? 0.8,
-            top_p: model.topP ?? 0.95,
+            ...buildSamplingParams(model.temperature, model.topP),
             ...(deps.thinkingEnabled ? { reasoning_effort: 'medium' } : {}),
           }),
           signal: abort.signal,
@@ -694,8 +692,7 @@ export function useChat(deps: UseChatDeps) {
           model: model.defaultModel,
           messages: assembled.messages,
           stream: true,
-          temperature: model.temperature ?? 0.8,
-          top_p: model.topP ?? 0.95,
+          ...buildSamplingParams(model.temperature, model.topP),
         }),
         signal: abort.signal,
       });

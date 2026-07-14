@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import type { ModelConfig, ScribeEngine, ScribeMode } from '../../types';
 import { useApp } from '../../hooks/useApp';
 import { useGlobalStates, type ScribeConfig } from '../../hooks/useGlobalStates';
-import { SCRIBE_SYSTEM_PROMPT, DEFAULT_TPL_GALGAME_CHAR_INJECTION } from '../../utils/constants';
+import { SCRIBE_SYSTEM_PROMPT, DEFAULT_TPL_GALGAME_CHAR_INJECTION, buildSamplingParams } from '../../utils/constants';
 import {
   GALGAME_MAX_TOKENS,
   buildGalgamePrompt,
@@ -169,8 +169,7 @@ export default function StateBookPanel({
             model: model.defaultModel,
             messages,
             stream: false,
-            temperature: model.temperature ?? 0.8,
-            top_p: model.topP ?? 0.95,
+            ...buildSamplingParams(model.temperature, model.topP),
           }),
         });
         if (!resp.ok) return;

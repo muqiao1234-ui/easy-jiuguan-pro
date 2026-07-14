@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useCharacters } from '../../hooks/useCharacters';
 import { useWorldBooks } from '../../hooks/useWorldBooks';
 import { useApp } from '../../hooks/useApp';
-import { AVATAR_MAX_WIDTH, AVATAR_QUALITY, DEFAULT_TPL_REVERSE_ENGINEER } from '../../utils/constants';
+import { AVATAR_MAX_WIDTH, AVATAR_QUALITY, DEFAULT_TPL_REVERSE_ENGINEER, buildSamplingParams } from '../../utils/constants';
 import { importSillyTavernCard, exportToSillyTavernJson } from '../../utils/sillyTavernCard';
 import { apiFetch } from '../../utils/apiFetch';
 import * as Stores from '../../db/stores';
@@ -246,8 +246,7 @@ export default function CharacterManager() {
           model: model.defaultModel,
           messages: [{ role: 'user', content: prompt }],
           stream: false,
-          temperature: model.temperature ?? 0.8,
-          top_p: model.topP ?? 0.95,
+          ...buildSamplingParams(model.temperature, model.topP),
           // 默认开启思考模式提升逆向智力
           reasoning_effort: 'medium',
         }),
