@@ -333,7 +333,7 @@ export default function MessageBubble({
               </span>
             )}
             {isAIChar && node.scribeTokenCost !== undefined && (
-              <span className="ml-2 font-mono text-[10px] text-amber-500/70 dark:text-amber-600/50">
+              <span className="ml-2 font-mono text-[10px] text-slate-400 dark:text-slate-600">
                 📜 状态书 {node.scribeTokenCost.toLocaleString()} Tokens
               </span>
             )}
