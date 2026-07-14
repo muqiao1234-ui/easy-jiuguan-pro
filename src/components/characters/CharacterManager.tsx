@@ -357,14 +357,14 @@ export default function CharacterManager() {
           {editingId && form.worldBookId && (
             <div className="bg-slate-800/60 border-2 border-red-600/50 rounded-lg p-3 space-y-2">
               <h4 className="text-xs font-semibold text-red-400">⚠️ 高级卡逆向</h4>
-              <p className="text-[10px] text-slate-300 leading-relaxed">
+              <p className="text-[10px] text-red-300 leading-relaxed">
                 此功能适用于<strong>主提示词空白、系统和剧情全在世界书里</strong>的高级卡。将使用蒸馏模型将世界书内容逆向串联为主角色提示词。
               </p>
-              <ul className="text-[10px] text-slate-300 space-y-0.5 list-disc list-inside">
-                <li>普通卡<strong className="text-red-400">无需使用</strong>，逆向需要花费 Token</li>
+              <ul className="text-[10px] text-red-300 space-y-0.5 list-disc list-inside">
+                <li>普通卡<strong>无需使用</strong>，逆向需要花费 Token</li>
                 <li>极度建议在一些空白高级卡上使用</li>
-                <li>不保证 100% 还原，效率约 <strong className="text-red-400">60%-80%</strong></li>
-                <li>逆向结果将<strong className="text-red-400">覆盖</strong>当前主提示词</li>
+                <li>不保证 100% 还原，效率约 <strong>60%-80%</strong></li>
+                <li>逆向结果将<strong>覆盖</strong>当前主提示词</li>
               </ul>
               <Button
                 className="w-full !bg-red-600 hover:!bg-red-500 !text-white font-semibold"
