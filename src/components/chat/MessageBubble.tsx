@@ -195,7 +195,7 @@ export default function MessageBubble({
                       data={node.galgameData!}
                       isEditing
                       onEdit={(newData) => {
-                        node.galgameData = newData;
+                        onEdit?.(node.id, editContent, undefined, newData);
                         setGalgameEditing(false);
                       }}
                     />

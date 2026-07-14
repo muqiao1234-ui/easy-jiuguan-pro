@@ -90,8 +90,11 @@ export default function ModelManager() {
   const handleSave = async () => {
     if (!form.name || !form.baseUrl || !form.defaultModel) return;
     // 钳制参数到常见大模型的安全范围，避免 400
-    const safeTemp = Math.max(0, Math.min(2, Number(form.temperature) || 0.8));
-    const safeTopP = Math.max(0, Math.min(1, Number(form.topP) || 0.92));
+    // SAMPLING_NONE (-1) 不参与钳制，保持原值以表示「不传采样参数」
+    const rawTemp = Number(form.temperature);
+    const rawTopP = Number(form.topP);
+    const safeTemp = rawTemp === SAMPLING_NONE ? SAMPLING_NONE : Math.max(0, Math.min(2, rawTemp || 0.8));
+    const safeTopP = rawTopP === SAMPLING_NONE ? SAMPLING_NONE : Math.max(0, Math.min(1, rawTopP || 0.92));
     if (editingId) {
       await updateModel(editingId, { ...form, temperature: safeTemp, topP: safeTopP });
     } else {

@@ -286,6 +286,7 @@ export default function ChatInput({
             </p>
           ) : (
             distilledNodes
+              .slice()
               .sort((a, b) => a.timestamp - b.timestamp)
               .map((node, i) => (
                 <div

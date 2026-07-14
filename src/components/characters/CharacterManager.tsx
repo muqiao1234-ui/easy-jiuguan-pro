@@ -209,6 +209,9 @@ export default function CharacterManager() {
       return;
     }
 
+    // 优先使用编辑表单中尚未保存的 worldBookId，实际反映用户当前选择
+    const effectiveWbId = form.worldBookId || char.worldBookId;
+
     setReverseLoading(true);
     setReverseStatus('');
 
@@ -218,8 +221,8 @@ export default function CharacterManager() {
       if (!model.apiKey) { setReverseError('❌ 蒸馏模型未配置 API Key，请先在模型管理中填写'); return; }
 
       let worldBookText = '';
-      if (char.worldBookId) {
-        const wb = await Stores.getWorldBookById(char.worldBookId);
+      if (effectiveWbId) {
+        const wb = await Stores.getWorldBookById(effectiveWbId);
         if (wb && wb.entries.length > 0) {
           worldBookText = wb.entries
             .map((e) => `【${e.keys.join('/')}】\n${e.value}`)
@@ -232,9 +235,11 @@ export default function CharacterManager() {
       }
 
       const promptTemplate = state.tplReverseEngineer || DEFAULT_TPL_REVERSE_ENGINEER;
+      // 原始提示词也优先用编辑表单中的值
+      const effectiveSystemPrompt = form.systemPrompt || char.systemPrompt || '（空）';
       const prompt = promptTemplate
         .replace('{worldBook}', worldBookText)
-        .replace('{originalPrompt}', char.systemPrompt || '（空）');
+        .replace('{originalPrompt}', effectiveSystemPrompt);
 
       const resp = await apiFetch(model.baseUrl, {
         method: 'POST',
@@ -270,7 +275,8 @@ export default function CharacterManager() {
       }
 
       const data = await resp.json();
-      let newPrompt = data.choices?.[0]?.message?.content || data.choices?.[0]?.message?.reasoning_content || '';
+      // 优先使用 content；reasoning_content 是思维链过程，不应作为主提示词
+      let newPrompt = data.choices?.[0]?.message?.content || '';
 
       if (!newPrompt.trim()) {
         throw new Error('❌ AI 返回空内容，可能模型拒绝了请求，请调整提示词或更换模型/API');

@@ -354,6 +354,8 @@ export function useChat(deps: UseChatDeps) {
       const abort = new AbortController();
       abortRef.current = abort;
       let fullContent = '';
+      // 记录 assembleContext 的 tokenEstimate，供 catch 块（AbortError 中断）使用
+      let preTryInputTokens: number | undefined;
 
       try {
         // 处理"植入记忆&状态书"一次性开关：作为独立 system 消息节点插入
@@ -432,11 +434,9 @@ export function useChat(deps: UseChatDeps) {
           .filter((n) => n.role === 'distilled')
           .slice(-deps.maxDistilledNodes);
         // 重试场景下 userNode 已经在 unarchived 中（复用既有节点），无需再追加；
-        // 普通场景下 userNode 刚刚 addMessageNode，已写入 DB，也会出现在 allNodes 里。
-        // 但为保留原有行为（保险起见），普通场景仍追加一次。
-        const recentForScan = isRetry
-          ? unarchived.slice(-deps.recentRounds)
-          : [...unarchived, userNode].slice(-deps.recentRounds);
+        // 普通场景下 userNode 刚刚 addMessageNode，已写入 DB，也已在 allNodes → unarchived 中。
+        // 不再额外追加 userNode，否则会导致当前用户消息重复注入上下文，token 虚高、世界书误触发。
+        const recentForScan = unarchived.slice(-deps.recentRounds);
         const recentForContext = recentForScan;
 
         const wbEntries = await deps.scanWorldBook(
@@ -482,6 +482,8 @@ export function useChat(deps: UseChatDeps) {
           activatedWorldBookEntries: assembled.metadata.activatedWorldBookEntries,
           tokenEstimate: assembled.metadata.tokenEstimate,
         });
+        // 存储供 catch 块使用（assembled 是 try 块作用域的 const，catch 无法直接访问）
+        preTryInputTokens = assembled.metadata.tokenEstimate;
 
         // 调试用：保存本次发送的完整 messages
         setLastPrompt(assembled.messages.map((m) => ({ role: m.role, content: m.content })));
@@ -663,6 +665,8 @@ export function useChat(deps: UseChatDeps) {
               timestamp: Date.now(),
               tokenCost: Math.ceil(fullContent.length * 0.5),
               tokenCostIsExact: false,
+              tokenCostInput: preTryInputTokens,
+              tokenCostTotal: (preTryInputTokens ?? 0) + Math.ceil(fullContent.length * 0.5),
             };
             await deps.addMessageNode(partialNode);
             const updatedNodes = await deps.getNodesByConversation(deps.conversationId);
@@ -854,6 +858,8 @@ export function useChat(deps: UseChatDeps) {
               content: fullContent,
               isArchived: false,
               timestamp: Date.now(),
+              tokenCost: Math.ceil(fullContent.length * 0.5),
+              tokenCostIsExact: false,
             };
             await deps.addMessageNode(partialNode);
             const updatedNodes = await deps.getNodesByConversation(deps.conversationId);

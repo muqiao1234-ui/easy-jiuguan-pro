@@ -128,8 +128,7 @@ export default function StateBookPanel({
             messages,
             stream: false,
             max_tokens: GALGAME_MAX_TOKENS,
-            temperature: 0.3,
-            top_p: 0.85,
+            ...buildSamplingParams(model.temperature, model.topP),
           }),
         });
         if (!resp.ok) return;
@@ -142,8 +141,12 @@ export default function StateBookPanel({
         if (!galgameData && !content && reasoning) {
           galgameData = parseGalgameResponse(reasoning, charName);
         }
+        const galgameTokenCost = data.usage?.total_tokens;
         if (galgameData) {
-          await Stores.updateMessageNode(latestAssistant.id, { galgameData });
+          await Stores.updateMessageNode(latestAssistant.id, {
+            galgameData,
+            ...(galgameTokenCost !== undefined ? { scribeTokenCost: galgameTokenCost } : {}),
+          });
         }
       } else {
         // 文本状态书：与自动触发一致，只读 recentRounds 条消息（非全部对话）
