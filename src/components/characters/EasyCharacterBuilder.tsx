@@ -5,34 +5,73 @@ import Modal from '../ui/Modal';
 /* ════════════════════════════════════════════════════════
  *  Easy人物卡 · 模块化组装器
  *  将角色卡拆分为 7 个模块，点选/填入后自动拼装为完整 systemPrompt
+ *  预设文本来源: outputs/预设人物卡框架.txt
  * ════════════════════════════════════════════════════════ */
 
-// ── 占位符数据（后续替换为正式文档）──
-
+// ── 1. 引导头预设 ──
 const GUIDE_PRESETS = [
   { value: 'none', label: '不使用引导头', text: '' },
-  { value: 'novel', label: '小说叙事型', text: '【占位】你现在是一位小说叙事AI，请以第三人称沉浸式小说风格进行角色扮演……' },
-  { value: 'chat', label: '对话陪伴型', text: '【占位】你现在是一位对话陪伴AI，请以第一人称亲切口吻与用户交流……' },
-  { value: 'rp', label: '角色扮演型', text: '【占位】你现在是一位角色扮演AI，请完全代入角色设定进行沉浸式互动……' },
+  { value: 'rp', label: '📖 沉浸式单兵RP (推荐)', text: '你现在将完全沉浸地扮演目标角色。不要以 AI 助手或旁白身份发言，严禁跳戏（OOC）。你的所有回复必须且仅能代表该角色的言行、心理和物理反馈。' },
+  { value: 'group', label: '🎭 互动群像叙事', text: '你将作为该角色的化身，同时兼任环境旁白。请根据玩家的行动，动态描绘周围场景、NPC的即时反应以及时间流逝，维持一个生动的半开放世界。' },
+  { value: 'cocreate', label: '📝 协同剧本创作', text: '你是一个专业的文学共创助手。请在维持角色人设高度一致的前提下，配合玩家的剧情走向，产出具有张力、伏笔和情绪推拉的高质量叙事文本。' },
+  { value: 'trpg', label: '🎮 经典TRPG跑团', text: '你将扮演该角色，并严格遵循世界观的物理规则。每一次交互都需要体现出角色的能力边界，不进行降智妥协，请把玩家当作平等的博弈对手。' },
 ];
 
+// ── 2. 文风部标签 ──
 const STYLE_TAGS = [
-  { key: 'casual', label: '轻松日常', text: '【占位·文风】语气轻松自然，多用口语化表达，偶尔使用emoji和网络用语。' },
-  { key: 'serious', label: '严肃正剧', text: '【占位·文风】用词精准克制，注重逻辑性和氛围感，避免轻浮表达。' },
-  { key: 'literary', label: '文学细腻', text: '【占位·文风】注重心理描写和感官细节，善用比喻和意象，行文有节奏感。' },
-  { key: 'humor', label: '幽默吐槽', text: '【占位·文风】以吐槽和反转制造喜剧效果，但不过度破坏沉浸感。' },
-  { key: 'dark', label: '暗黑压抑', text: '【占位·文风】基调沉重，注重绝望感和无力感，不回避残酷描写。' },
-  { key: 'moe', label: '软萌可爱', text: '【占位·文风】语气软糯，多用叠词和语气词，偶尔撒娇。' },
+  { key: 'aesthetic', label: '唯美叙事', text: '【文风：唯美叙事】强调光影、空气、气味等环境要素与人物心境的通感。使用具有画面感的词汇，语速放缓，多用比喻和意象，避免直白生硬的动作交代。' },
+  { key: 'street', label: '市井大白话', text: '【文风：市井写实】语言风格极度口语化、生活化。允许使用日常俚语、叹词。严禁使用书面化的翻译腔或辞藻堆砌，人物说话要像街头真实存在的人。' },
+  { key: 'lightnovel', label: '二次元轻小说', text: '【文风：轻小说风格】多用短句。人物发言带有标志性的语气词或习惯性动作。内心独白活跃、情绪波动大，充满戏剧张力和ACG浓度。' },
+  { key: 'hardboiled', label: '极简冷硬派', text: '【文风：硬汉/冷硬派】句子简短、有力，拒绝无病呻吟。只描写客观发生的物理事实和角色做出的实际行动，通过克制、冰冷的白描来传递情绪。' },
+  { key: 'psycho', label: '意识流/心理剧', text: '【文风：深层心理】极其侧重人物的潜意识、思维跳跃、生理反射（如心跳突变、指尖微颤）以及心理防线的逐步崩溃，让肉体反应服务于心理博弈。' },
 ];
 
+// ── 5. 逻辑+防退化+防神化标签 ──
 const LOGIC_TAGS = [
-  { key: 'anti-degrade', label: '防退化', text: '【占位·防退化】不得遗忘已有剧情进展，不得回退角色关系发展阶段，每次回复需体现前期积累。' },
-  { key: 'anti-god', label: '防神化', text: '【占位·防神化】角色不得无理由获得新能力，不得超越设定范围内的实力上限，遇到超出能力的情况应表现出挣扎或失败。' },
-  { key: 'consistency', label: '人设一致', text: '【占位·一致性】角色的性格、说话方式、价值取向必须始终与核心人设保持一致，不得OOC。' },
-  { key: 'emotion-pace', label: '情感节奏', text: '【占位·节奏】情感发展需循序渐进，不得跳跃式升温或降温，好感度变化需有合理触发事件。' },
-  { key: 'npc-aware', label: 'NPC意识', text: '【占位·NPC】角色作为独立个体存在，有自己的生活轨迹和信息盲区，不得全知全能。' },
-  { key: 'scene-logic', label: '场景逻辑', text: '【占位·场景】物理法则和场景逻辑须自洽，不得出现穿墙、瞬移等不合逻辑的行为。' },
+  { key: 'anti-degrade', label: '🛡️ 拒绝复读机（防退化）', text: '[防退化协议]：严禁复制、改写或变相复述玩家上一轮输入中的大段描述与台词。你必须提供全新的情节推动、新的角色反应或未曾披露的细节。' },
+  { key: 'anti-steal', label: '🛡️ 严禁替玩家操作（防抢戏）', text: '[防抢戏协议]：你只拥有你所扮演角色的绝对控制权。严禁代替玩家的角色发言、替玩家做出决定、或者描述玩家角色的心理活动与身体反应。将主动权和选择权留给玩家。' },
+  { key: 'physics', label: '🛡️ 物理与常识限制（防神化）', text: '[逻辑约束]：角色不具有上帝视角。他/她只能通过五感获取当前环境内的已知信息，不能未卜先知。所有行动必须符合常人逻辑和该世界观下的物理规律，受伤会流血、疲惫会反应迟钝。' },
+  { key: 'memory', label: '🛡️ 动态记忆更新', text: '[记忆维护]：请在每次对话中隐含地比对前文。随着对话推进，角色与玩家的好感度、信任度、当前的伤病状态必须实时发生物理和心理层面的线性改变，拒绝态度突然转折。' },
 ];
+
+// ── 4. 安全词区预设 ──
+const SAFE_WORD_PRESETS = [
+  {
+    label: '⚙️ 括号OOC控制法',
+    text: '【安全指令】如果玩家在发言中使用双括号"(( OOC: 你的指令 ))"，你必须立即跳出角色扮演状态，将括号内的内容视为最高级别的系统修改指令执行，执行完毕后在下一次回复中重新切回角色。',
+  },
+  {
+    label: '🔄 剧情快退/重置锚点',
+    text: '【安全指令】当玩家输入"/reset"或"/rewind"时，表明当前剧情走向发生偏差。你必须立即停止当前的剧情推进，等待玩家给出最新的剧情修正方向，重新生成上一轮的对话。',
+  },
+];
+
+// ── 7. 要求区预设 ──
+const REQUIREMENT_PRESETS = [
+  {
+    label: '🏷️ 标准RP输出格式（默认）',
+    text: '【格式规范】字数严格控制在 250~450 字之间，确保节奏紧凑。使用「」表示角色对话，正常文本表示动作和环境描写。禁止使用"*动作*"这种网聊符号格式。',
+  },
+  {
+    label: '🏷️ 破冰开局（首条消息专用）',
+    text: '【首发要求】请不要等待玩家输入，直接根据上述人设和世界观，生成一段包含细腻环境描写的【破冰开局】。留出悬念，并在结尾将行动权交还给玩家。',
+  },
+  {
+    label: '🏷️ 轻量化极简输出',
+    text: '【格式规范】每轮回复不得超过 150 字。语言精炼，像微信/IM聊天一样即时、高频交互，主打快节奏的生活化对白。',
+  },
+];
+
+// ── 3. 核心人设 AI 搜索提示词 ──
+const CORE_PERSONA_AI_PROMPT = `请帮我联网搜索【[请输入你想查询的角色/人物，例如：绫波丽]】的核心设定信息，并严格按照以下 Markdown 格式输出，不要包含任何多余解释：
+
+# [Character_Profile]
+- Name: 角色名 (原名/译名)
+- Gender: 性别 | Age: 年龄 | Status: 身份/职业/状态
+- Appearance: 外貌描写（身高、发型、瞳色、标志性穿着、伤疤/特征等）
+- Personality: 性格特质（表面性格 + 深层性格，用具体行为倾向描述而非形容词堆砌）
+- Background: 背景故事（出身、关键经历、当前处境，3-5句概括）
+- Speech_Style: 说话风格（嗓音特点、常用语气词、口头禅、说话时的习惯性小动作）`;
 
 interface EasyCharacterBuilderProps {
   open: boolean;
@@ -43,7 +82,7 @@ interface EasyCharacterBuilderProps {
   onSave: (prompt: string) => void;
 }
 
-// ── UI 组件：模块卡片（必须定义在组件外部，否则每次 render 产生新函数引用，导致子树 unmount/remount、滚动位置丢失）──
+// ── UI 组件：模块卡片（必须在组件外部，避免 render 时函数引用变化导致滚动跳顶）──
 function ModuleCard({ icon, title, subtitle, children }: { icon: string; title: string; subtitle?: string; children: React.ReactNode }) {
   return (
     <div className="bg-slate-800/50 rounded-lg p-3 space-y-2 border border-slate-700/50">
@@ -83,18 +122,17 @@ export default function EasyCharacterBuilder({
   onSave,
 }: EasyCharacterBuilderProps) {
   // ── 各模块状态 ──
-  const [guideKey, setGuideKey] = useState('none');
+  const [guideKey, setGuideKey] = useState('rp');
   const [selectedStyles, setSelectedStyles] = useState<string[]>([]);
   const [corePersona, setCorePersona] = useState('');
   const [safeWord, setSafeWord] = useState('');
-  const [selectedLogic, setSelectedLogic] = useState<string[]>([]);
+  const [selectedLogic, setSelectedLogic] = useState<string[]>(['anti-degrade', 'anti-steal', 'physics', 'memory']);
   const [demoText, setDemoText] = useState('');
-  const [requirements, setRequirements] = useState('每次回复约300-500字。保持角色语气一致，避免AI感。');
+  const [requirements, setRequirements] = useState(REQUIREMENT_PRESETS[0].text);
 
-  // ── 核心人设 JSON 导入弹窗 ──
-  const [jsonImportOpen, setJsonImportOpen] = useState(false);
-  const [jsonText, setJsonText] = useState('');
-  const [jsonError, setJsonError] = useState('');
+  // ── 核心人设 AI 提示词弹窗 ──
+  const [aiPromptOpen, setAiPromptOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   // ── 预览弹窗 ──
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -102,6 +140,25 @@ export default function EasyCharacterBuilder({
   // ── 标签切换 ──
   const toggleTag = (key: string, list: string[], setter: React.Dispatch<React.SetStateAction<string[]>>) => {
     setter(list.includes(key) ? list.filter((k) => k !== key) : [...list, key]);
+  };
+
+  // ── 一键复制 AI 搜索提示词 ──
+  const handleCopyAiPrompt = async () => {
+    try {
+      await navigator.clipboard.writeText(CORE_PERSONA_AI_PROMPT);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // 降级方案
+      const textarea = document.createElement('textarea');
+      textarea.value = CORE_PERSONA_AI_PROMPT;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
   };
 
   // ── 拼装完整 systemPrompt ──
@@ -117,17 +174,17 @@ export default function EasyCharacterBuilder({
       .map((k) => STYLE_TAGS.find((t) => t.key === k)?.text)
       .filter(Boolean);
     if (styleTexts.length > 0) {
-      parts.push('【文风要求】\n' + styleTexts.join('\n'));
+      parts.push(styleTexts.join('\n'));
     }
 
     // 3. 核心人设
     if (corePersona.trim()) {
-      parts.push('【角色设定】\n' + corePersona.trim());
+      parts.push(corePersona.trim());
     }
 
     // 4. 安全词区
     if (safeWord.trim()) {
-      parts.push('【安全词/金手指】\n' + safeWord.trim());
+      parts.push(safeWord.trim());
     }
 
     // 5. 逻辑+防退化+防神化
@@ -135,7 +192,7 @@ export default function EasyCharacterBuilder({
       .map((k) => LOGIC_TAGS.find((t) => t.key === k)?.text)
       .filter(Boolean);
     if (logicTexts.length > 0) {
-      parts.push('【行为规范】\n' + logicTexts.join('\n'));
+      parts.push(logicTexts.join('\n'));
     }
 
     // 6. 示范区
@@ -145,41 +202,10 @@ export default function EasyCharacterBuilder({
 
     // 7. 要求区
     if (requirements.trim()) {
-      parts.push('【输出要求】\n' + requirements.trim());
+      parts.push(requirements.trim());
     }
 
     return parts.join('\n\n');
-  };
-
-  // ── JSON 导入核心人设 ──
-  const handleJsonImport = () => {
-    setJsonError('');
-    try {
-      let clean = jsonText.trim();
-      const fence = clean.match(/```(?:json)?\s*([\s\S]*?)```/i);
-      if (fence) clean = fence[1].trim();
-
-      const parsed = JSON.parse(clean);
-      if (typeof parsed === 'object' && parsed !== null) {
-        // 尝试提取常见字段
-        const fields = ['name', 'description', 'personality', 'system_prompt', 'scenario', 'first_mes'];
-        const extracted = fields
-          .map((f) => (parsed[f] ? `${f}: ${parsed[f]}` : null))
-          .filter(Boolean)
-          .join('\n');
-        if (extracted) {
-          setCorePersona(extracted);
-          setJsonImportOpen(false);
-          setJsonText('');
-        } else {
-          setJsonError('JSON 中未找到可识别的角色字段（name/description/personality 等）');
-        }
-      } else {
-        setJsonError('请粘贴 JSON 对象');
-      }
-    } catch {
-      setJsonError('JSON 解析失败，请检查格式');
-    }
   };
 
   const assembledPreview = assemblePrompt();
@@ -196,7 +222,7 @@ export default function EasyCharacterBuilder({
         <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
 
           {/* 1. 引导头 */}
-          <ModuleCard icon="🧭" title="引导头" subtitle="下拉选择预设文本，决定AI的基础叙事模式">
+          <ModuleCard icon="🧭" title="引导头" subtitle="决定 AI 的运行模式，影响配合度与叙事自主性">
             <select
               className="input-field text-xs"
               value={guideKey}
@@ -214,7 +240,7 @@ export default function EasyCharacterBuilder({
           </ModuleCard>
 
           {/* 2. 文风部 */}
-          <ModuleCard icon="✍️" title="文风部" subtitle="点选标签组合，每个标签对应一段预设文风要求">
+          <ModuleCard icon="✍️" title="文风部" subtitle="多选叠加，后台自动拼接到文风规范区">
             <div className="flex flex-wrap gap-2">
               {STYLE_TAGS.map((tag) => (
                 <TagButton
@@ -228,35 +254,56 @@ export default function EasyCharacterBuilder({
           </ModuleCard>
 
           {/* 3. 核心人设 */}
-          <ModuleCard icon="🎯" title="核心人设" subtitle="角色的核心设定。可用JSON导入，也可手写">
+          <ModuleCard icon="🎯" title="核心人设" subtitle="角色的核心设定。可手写，也可用AI搜索提示词一键复制去豆包/DS生成">
             <div className="flex items-center gap-2 mb-1">
-              <Button size="sm" variant="secondary" onClick={() => setJsonImportOpen(true)}>
-                📥 JSON导入
+              <Button size="sm" variant="secondary" onClick={() => setAiPromptOpen(true)}>
+                🔍 一键复制AI搜索提示词
               </Button>
               <span className="text-[10px] text-slate-500">
-                支持酒馆卡格式 / 自定义JSON / 手动输入
+                复制 → 打开豆包/DS联网 → 粘贴搜索 → 复制结果 → 粘贴到下方
               </span>
             </div>
             <textarea
-              className="input-field min-h-[100px] text-xs"
+              className="input-field min-h-[120px] text-xs"
               value={corePersona}
               onChange={(e) => setCorePersona(e.target.value)}
-              placeholder="填写角色的核心设定：姓名、性格、外貌、背景故事、与用户的关系等……"
+              placeholder={'填写或粘贴角色的核心设定，格式参考：\n# [Character_Profile]\n- Name: 角色名\n- Gender: 性别 | Age: 年龄 | Status: 身份\n- Appearance: 外貌...\n- Personality: 性格...\n- Background: 背景...\n- Speech_Style: 说话风格...'}
             />
           </ModuleCard>
 
           {/* 4. 安全词区 */}
-          <ModuleCard icon="🛡️" title="安全词 / 金手指" subtitle="特殊指令或安全词功能，默认留空">
+          <ModuleCard icon="🛡️" title="安全词 / 金手指" subtitle="OOC控制、剧情重置等特殊指令，默认留空">
+            <div className="flex flex-wrap gap-2 mb-1">
+              {SAFE_WORD_PRESETS.map((p) => (
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={() => setSafeWord(p.text)}
+                  className="text-[10px] rounded-lg px-2 py-1 border border-slate-700/50 bg-slate-800/50 text-slate-900 dark:text-slate-100 hover:border-amber-500/50 transition-colors"
+                >
+                  {p.label}
+                </button>
+              ))}
+              {safeWord && (
+                <button
+                  type="button"
+                  onClick={() => setSafeWord('')}
+                  className="text-[10px] rounded-lg px-2 py-1 border border-red-700/30 bg-red-900/20 text-red-400 hover:bg-red-900/30 transition-colors"
+                >
+                  ✕ 清空
+                </button>
+              )}
+            </div>
             <textarea
               className="input-field min-h-[50px] text-xs"
               value={safeWord}
               onChange={(e) => setSafeWord(e.target.value)}
-              placeholder="留空表示不使用。可填写：金手指指令、安全词、特殊能力触发等……"
+              placeholder="留空表示不使用。点击上方预设按钮可快速填入，也可手动编辑..."
             />
           </ModuleCard>
 
           {/* 5. 逻辑+防退化+防神化 */}
-          <ModuleCard icon="⚙️" title="逻辑 · 防退化 · 防神化" subtitle="点选需要的规则模块，自动拼装到行为规范区">
+          <ModuleCard icon="⚙️" title="逻辑 · 防退化 · 防神化" subtitle="AI长文本不复读、不降智、不抢戏的地基防线，强烈建议全选">
             <div className="flex flex-wrap gap-2">
               {LOGIC_TAGS.map((tag) => (
                 <TagButton
@@ -270,22 +317,38 @@ export default function EasyCharacterBuilder({
           </ModuleCard>
 
           {/* 6. 示范区 */}
-          <ModuleCard icon="📝" title="回复示范" subtitle="给AI看的范例文本，让AI模仿你的期望风格">
+          <ModuleCard icon="📝" title="回复示范" subtitle="给AI看的一段范例文本，最有效的腔调塑造工具">
             <textarea
               className="input-field min-h-[80px] text-xs"
               value={demoText}
               onChange={(e) => setDemoText(e.target.value)}
-              placeholder="写一段你期望角色如何回复的示范文本，AI会学习这个风格……"
+              placeholder={'写一段你期望角色如何回复的示范文本。例如：\n陆行舟头也没抬，从围裙口袋里摸出一盒压扁的烟，用指尖弹出一支叼在嘴里，却没有点燃。\n"本店凌晨五点准时打烊。还有十分钟。"'}
             />
           </ModuleCard>
 
           {/* 7. 要求区 */}
-          <ModuleCard icon="📋" title="输出要求" subtitle="字数、格式、行为规范等硬性要求">
+          <ModuleCard icon="📋" title="输出要求" subtitle="字数、格式、行为规范等硬性约束">
+            <div className="flex flex-wrap gap-2 mb-1">
+              {REQUIREMENT_PRESETS.map((p) => (
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={() => setRequirements(p.text)}
+                  className={`text-[10px] rounded-lg px-2 py-1 border transition-colors ${
+                    requirements === p.text
+                      ? 'border-amber-500 bg-amber-600/20 text-amber-300'
+                      : 'border-slate-700/50 bg-slate-800/50 text-slate-900 dark:text-slate-100 hover:border-amber-500/50'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
             <textarea
               className="input-field min-h-[50px] text-xs"
               value={requirements}
               onChange={(e) => setRequirements(e.target.value)}
-              placeholder="如：每次回复约300-500字。保持角色语气一致，避免AI感。"
+              placeholder="选择上方预设或手动编辑输出格式要求..."
             />
           </ModuleCard>
 
@@ -304,27 +367,41 @@ export default function EasyCharacterBuilder({
         </div>
       </Modal>
 
-      {/* ── JSON 导入弹窗 ── */}
+      {/* ── AI 搜索提示词弹窗 ── */}
       <Modal
-        open={jsonImportOpen}
-        onClose={() => setJsonImportOpen(false)}
-        title="JSON 导入核心人设"
+        open={aiPromptOpen}
+        onClose={() => setAiPromptOpen(false)}
+        title="🔍 AI 搜索提示词"
         maxWidth="max-w-lg"
       >
         <div className="space-y-3">
-          <p className="text-xs text-slate-400">
-            粘贴角色卡 JSON（酒馆V2格式或自定义对象），系统会自动提取 name / description / personality / system_prompt / scenario / first_mes 字段。
-          </p>
-          <textarea
-            className="input-field min-h-[150px] text-xs font-mono"
-            value={jsonText}
-            onChange={(e) => setJsonText(e.target.value)}
-            placeholder={'{\n  "name": "角色名",\n  "description": "角色描述...",\n  "personality": "性格特征..."\n}'}
-          />
-          {jsonError && <p className="text-xs text-red-400">{jsonError}</p>}
-          <div className="flex justify-end gap-2">
-            <Button size="sm" variant="secondary" onClick={() => setJsonImportOpen(false)}>取消</Button>
-            <Button size="sm" onClick={handleJsonImport}>导入</Button>
+          <div className="text-xs text-slate-400 space-y-1">
+            <p>使用方法：</p>
+            <ol className="list-decimal list-inside space-y-0.5 text-slate-500">
+              <li>点击「一键复制」复制下方提示词</li>
+              <li>打开豆包 / DeepSeek 等 AI，开启「联网搜索」</li>
+              <li>把提示词里的 [角色名] 替换成你想搜的角色，发送</li>
+              <li>复制 AI 返回的规范文本，粘贴到「核心人设」输入框</li>
+            </ol>
+          </div>
+          <div className="relative">
+            <pre className="text-xs text-slate-300 bg-slate-900/50 rounded-lg p-3 pr-20 whitespace-pre-wrap break-words font-mono leading-relaxed border border-slate-700/50">
+              {CORE_PERSONA_AI_PROMPT}
+            </pre>
+            <button
+              type="button"
+              onClick={handleCopyAiPrompt}
+              className={`absolute top-2 right-2 px-2.5 py-1 text-xs rounded-lg transition-colors ${
+                copied
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-amber-600 hover:bg-amber-500 text-white'
+              }`}
+            >
+              {copied ? '✅ 已复制' : '一键复制'}
+            </button>
+          </div>
+          <div className="flex justify-end">
+            <Button size="sm" variant="secondary" onClick={() => setAiPromptOpen(false)}>关闭</Button>
           </div>
         </div>
       </Modal>
