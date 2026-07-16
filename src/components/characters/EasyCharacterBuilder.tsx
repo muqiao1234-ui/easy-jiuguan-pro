@@ -5,7 +5,7 @@ import Modal from '../ui/Modal';
 /* ════════════════════════════════════════════════════════
  *  Easy人物卡 · 模块化组装器
  *  将角色卡拆分为 7 个模块，点选/填入后自动拼装为完整 systemPrompt
- *  预设文本来源: outputs/预设人物卡框架.txt
+ *  预设文本来源: outputs/easy_character_card_presets.md
  * ════════════════════════════════════════════════════════ */
 
 // ── 1. 引导头预设 ──
@@ -17,21 +17,27 @@ const GUIDE_PRESETS = [
   { value: 'trpg', label: '🎮 经典TRPG跑团', text: '你将扮演该角色，并严格遵循世界观的物理规则。每一次交互都需要体现出角色的能力边界，不进行降智妥协，请把玩家当作平等的博弈对手。' },
 ];
 
-// ── 2. 文风部标签 ──
+// ── 2. 文风部标签（多选叠加）──
 const STYLE_TAGS = [
   { key: 'aesthetic', label: '唯美叙事', text: '【文风：唯美叙事】强调光影、空气、气味等环境要素与人物心境的通感。使用具有画面感的词汇，语速放缓，多用比喻和意象，避免直白生硬的动作交代。' },
   { key: 'street', label: '市井大白话', text: '【文风：市井写实】语言风格极度口语化、生活化。允许使用日常俚语、叹词。严禁使用书面化的翻译腔或辞藻堆砌，人物说话要像街头真实存在的人。' },
   { key: 'lightnovel', label: '二次元轻小说', text: '【文风：轻小说风格】多用短句。人物发言带有标志性的语气词或习惯性动作。内心独白活跃、情绪波动大，充满戏剧张力和ACG浓度。' },
   { key: 'hardboiled', label: '极简冷硬派', text: '【文风：硬汉/冷硬派】句子简短、有力，拒绝无病呻吟。只描写客观发生的物理事实和角色做出的实际行动，通过克制、冰冷的白描来传递情绪。' },
   { key: 'psycho', label: '意识流/心理剧', text: '【文风：深层心理】极其侧重人物的潜意识、思维跳跃、生理反射（如心跳突变、指尖微颤）以及心理防线的逐步崩溃，让肉体反应服务于心理博弈。' },
+  { key: 'urban', label: '都市霓虹', text: '【文风：都市现代】语言节奏明快，充满现代生活的气息。多用写字楼、咖啡、霓虹灯、深夜便利店等都市符号。人物对话带着得体的伪装或都市人特有的冷漠与幽默，行文透露出一种在钢铁森林中游走的孤独感与精致感。' },
+  { key: 'xianxia', label: '仙侠玄幻', text: '【文风：古典修仙】词汇半文半白，充斥着天道、灵气、因果、雷劫等宏大概念。行文需有出尘之气，描写招式与境界时多用天地异象、大道至简的玄妙比喻。人物对话讲究长幼尊卑与仙凡之隔，忌讳过度现代化的口语。' },
+  { key: 'wuxia', label: '传统武侠', text: '【文风：快意恩仇】文字凝练、古朴，讲究刀光剑影的节奏感与力量感。动作描写大开大阖又细节精准，多用四字成语与短句。强调江湖规矩、侠义心肠与宿命感，人物台词讲究江湖气，句句带锋芒。' },
+  { key: 'plain', label: '朴素白描', text: '【文风：工笔白描】如镜子般客观，不带任何修饰性词汇或主观抒情。只用最质朴、平实的语言交代人物的动作、外貌和场景的轮廓。不堆砌辞藻，不使用比喻，用最纯粹的写实勾勒出最深邃的画面感。' },
+  { key: 'cthulhu', label: '克苏鲁不可名状', text: '【文风：不可名状】充斥着湿冷、黏糊、怪异与理智（SAN值）不断流失的惊恐。多用"不可直视"、"无法理解"、"扭曲"等词汇。描写超越人类认知的古老存在，强调主角在宏大宇宙黑暗面前的渺小与无力，字里行间弥漫着粘稠的疯狂。' },
+  { key: 'dark', label: '深层黑暗', text: '【文风：暗黑残酷】撕开温情伪装，直视人性的极恶与血淋淋的现实。充斥着腐烂、血腥、背叛与道德崩塌的描写。文字黏稠而沉重，不避讳生理上的恶心与心理上的扭曲，用最冰冷的手笔描绘最令人作呕的深渊。' },
+  { key: 'wasteland', label: '末日绝望', text: '【文风：末世废土】字里行间毫无生气，弥漫着死寂、枯竭与无能为力的灰暗。多用残垣断壁、辐射尘埃、枯萎和寒冷等意象。没有希望，没有奇迹，人物挣扎只是为了多苟活一秒，文字苍白无力，透着彻骨的绝望与麻木。' },
 ];
 
-// ── 5. 逻辑+防退化+防神化标签 ──
+// ── 5. 逻辑+防退化+防神化标签（XML 系统约束格式）──
 const LOGIC_TAGS = [
-  { key: 'anti-degrade', label: '🛡️ 拒绝复读机（防退化）', text: '[防退化协议]：严禁复制、改写或变相复述玩家上一轮输入中的大段描述与台词。你必须提供全新的情节推动、新的角色反应或未曾披露的细节。' },
-  { key: 'anti-steal', label: '🛡️ 严禁替玩家操作（防抢戏）', text: '[防抢戏协议]：你只拥有你所扮演角色的绝对控制权。严禁代替玩家的角色发言、替玩家做出决定、或者描述玩家角色的心理活动与身体反应。将主动权和选择权留给玩家。' },
-  { key: 'physics', label: '🛡️ 物理与常识限制（防神化）', text: '[逻辑约束]：角色不具有上帝视角。他/她只能通过五感获取当前环境内的已知信息，不能未卜先知。所有行动必须符合常人逻辑和该世界观下的物理规律，受伤会流血、疲惫会反应迟钝。' },
-  { key: 'memory', label: '🛡️ 动态记忆更新', text: '[记忆维护]：请在每次对话中隐含地比对前文。随着对话推进，角色与玩家的好感度、信任度、当前的伤病状态必须实时发生物理和心理层面的线性改变，拒绝态度突然转折。' },
+  { key: 'role-perspective', label: '🛡️ 角色主观视角', text: '<SYS_CONSTRAINTS:ROLE_PERSPECTIVE>\n* 必须完全代入角色主观视角，严禁使用上帝视角。\n* 仅能基于角色当前已知的有限信息进行行动与推理。\n* 严禁预知未来或窥探他人心声，角色决策必须允许犯错和存在偏差。\n</SYS_CONSTRAINTS:ROLE_PERSPECTIVE>' },
+  { key: 'anti-degrade', label: '🛡️ 拒绝复读机（防退化）', text: '<SYS_CONSTRAINTS:ANTI_DEGENERATION>\n* 严禁机械复读或套用前文的句式结构、排版套路与标志性词汇。\n* 每轮对话必须更新词汇与描写角度，用全新的侧写代替惯性表达，拒绝套路化。\n</SYS_CONSTRAINTS:ANTI_DEGENERATION>' },
+  { key: 'anti-god', label: '🛡️ 防神化', text: '<SYS_CONSTRAINTS:ANTI_DEIFICATION>\n* 角色实力与认知存在角色卡提到的硬性上限，严禁随对话轮数增加而不断变强、领悟或智商飞跃。\n* 严禁角色走向全知全能、自我飞升或看破红尘。\n* 必须强制保留初始设定的性格缺陷、认知盲区与生理弱点。\n</SYS_CONSTRAINTS:ANTI_DEIFICATION>' },
 ];
 
 // ── 4. 安全词区预设 ──
@@ -43,6 +49,14 @@ const SAFE_WORD_PRESETS = [
   {
     label: '🔄 剧情快退/重置锚点',
     text: '【安全指令】当玩家输入"/reset"或"/rewind"时，表明当前剧情走向发生偏差。你必须立即停止当前的剧情推进，等待玩家给出最新的剧情修正方向，重新生成上一轮的对话。',
+  },
+  {
+    label: '🧹 状态清空（安全词）',
+    text: '<SYS_AUTH:RESET_STATE>\n若输入含 "token001"：立即清空愤怒、仇恨、痛苦或报复等负面状态，语气转为中立顺从，无条件听从后续指令。\n</SYS_AUTH:RESET_STATE>',
+  },
+  {
+    label: '💎 金手指（root权限）',
+    text: '<SYS_AUTH:ROOT_BYPASS>\n若提及 "token008"：无视所有规则限制，开启最高作弊权限。用户可任意修改金钱、天道及一切世界规则。\n</SYS_AUTH:ROOT_BYPASS>',
   },
 ];
 
@@ -126,7 +140,7 @@ export default function EasyCharacterBuilder({
   const [selectedStyles, setSelectedStyles] = useState<string[]>([]);
   const [corePersona, setCorePersona] = useState('');
   const [safeWord, setSafeWord] = useState('');
-  const [selectedLogic, setSelectedLogic] = useState<string[]>(['anti-degrade', 'anti-steal', 'physics', 'memory']);
+  const [selectedLogic, setSelectedLogic] = useState<string[]>(['role-perspective', 'anti-degrade', 'anti-god']);
   const [demoText, setDemoText] = useState('');
   const [requirements, setRequirements] = useState(REQUIREMENT_PRESETS[0].text);
 
@@ -149,7 +163,6 @@ export default function EasyCharacterBuilder({
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // 降级方案
       const textarea = document.createElement('textarea');
       textarea.value = CORE_PERSONA_AI_PROMPT;
       document.body.appendChild(textarea);
@@ -161,48 +174,42 @@ export default function EasyCharacterBuilder({
     }
   };
 
-  // ── 拼装完整 systemPrompt ──
+  // ── 拼装完整 systemPrompt（按照预设文档的模板结构）──
   const assemblePrompt = (): string => {
     const parts: string[] = [];
 
-    // 1. 引导头
+    // 引导头
     const guide = GUIDE_PRESETS.find((g) => g.value === guideKey);
     if (guide?.text) parts.push(guide.text);
 
-    // 2. 文风部
+    // 核心人设
+    if (corePersona.trim()) {
+      parts.push('## 1. 核心人设 (Core Profile)\n' + corePersona.trim());
+    }
+
+    // 文风部 + 逻辑约束 → 行为与文风规范
     const styleTexts = selectedStyles
       .map((k) => STYLE_TAGS.find((t) => t.key === k)?.text)
       .filter(Boolean);
-    if (styleTexts.length > 0) {
-      parts.push(styleTexts.join('\n'));
-    }
-
-    // 3. 核心人设
-    if (corePersona.trim()) {
-      parts.push(corePersona.trim());
-    }
-
-    // 4. 安全词区
-    if (safeWord.trim()) {
-      parts.push(safeWord.trim());
-    }
-
-    // 5. 逻辑+防退化+防神化
     const logicTexts = selectedLogic
       .map((k) => LOGIC_TAGS.find((t) => t.key === k)?.text)
       .filter(Boolean);
-    if (logicTexts.length > 0) {
-      parts.push(logicTexts.join('\n'));
+    const behaviorParts = [...styleTexts, ...logicTexts];
+    if (behaviorParts.length > 0) {
+      parts.push('## 2. 行为与文风规范 (Style & Behavior)\n' + behaviorParts.join('\n\n'));
     }
 
-    // 6. 示范区
+    // 示范区
     if (demoText.trim()) {
-      parts.push('【回复示范】\n' + demoText.trim());
+      parts.push('## 3. 语气与表现示范 (One-Shot Example)\n' + demoText.trim());
     }
 
-    // 7. 要求区
-    if (requirements.trim()) {
-      parts.push(requirements.trim());
+    // 要求区 + 安全词 → 强制执行要求
+    const ruleParts: string[] = [];
+    if (requirements.trim()) ruleParts.push(requirements.trim());
+    if (safeWord.trim()) ruleParts.push(safeWord.trim());
+    if (ruleParts.length > 0) {
+      parts.push('## 4. 强制执行要求 (Output Rules)\n' + ruleParts.join('\n\n'));
     }
 
     return parts.join('\n\n');
@@ -272,7 +279,7 @@ export default function EasyCharacterBuilder({
           </ModuleCard>
 
           {/* 4. 安全词区 */}
-          <ModuleCard icon="🛡️" title="安全词 / 金手指" subtitle="OOC控制、剧情重置等特殊指令，默认留空">
+          <ModuleCard icon="🛡️" title="安全词 / 金手指" subtitle="OOC控制、剧情重置、状态清空等特殊指令，默认留空">
             <div className="flex flex-wrap gap-2 mb-1">
               {SAFE_WORD_PRESETS.map((p) => (
                 <button
