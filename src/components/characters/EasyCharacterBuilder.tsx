@@ -43,6 +43,39 @@ interface EasyCharacterBuilderProps {
   onSave: (prompt: string) => void;
 }
 
+// ── UI 组件：模块卡片（必须定义在组件外部，否则每次 render 产生新函数引用，导致子树 unmount/remount、滚动位置丢失）──
+function ModuleCard({ icon, title, subtitle, children }: { icon: string; title: string; subtitle?: string; children: React.ReactNode }) {
+  return (
+    <div className="bg-slate-800/50 rounded-lg p-3 space-y-2 border border-slate-700/50">
+      <div className="flex items-center gap-2">
+        <span className="text-base">{icon}</span>
+        <div>
+          <h4 className="text-xs font-semibold text-amber-400">{title}</h4>
+          {subtitle && <p className="text-[10px] text-slate-500">{subtitle}</p>}
+        </div>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// ── UI 组件：可点选标签（同上，必须在组件外部）──
+function TagButton({ tag, selected, onClick }: { tag: { key: string; label: string }; selected: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`text-xs rounded-lg px-3 py-1.5 border transition-colors ${
+        selected
+          ? 'bg-amber-600/20 border-amber-500 text-amber-300'
+          : 'bg-slate-800/50 border-slate-700/50 text-slate-900 dark:text-slate-100 hover:border-amber-500/50'
+      }`}
+    >
+      {tag.label}
+    </button>
+  );
+}
+
 export default function EasyCharacterBuilder({
   open,
   onClose,
@@ -150,35 +183,6 @@ export default function EasyCharacterBuilder({
   };
 
   const assembledPreview = assemblePrompt();
-
-  // ── UI 组件：模块卡片 ──
-  const ModuleCard = ({ icon, title, subtitle, children }: { icon: string; title: string; subtitle?: string; children: React.ReactNode }) => (
-    <div className="bg-slate-800/50 rounded-lg p-3 space-y-2 border border-slate-700/50">
-      <div className="flex items-center gap-2">
-        <span className="text-base">{icon}</span>
-        <div>
-          <h4 className="text-xs font-semibold text-amber-400">{title}</h4>
-          {subtitle && <p className="text-[10px] text-slate-500">{subtitle}</p>}
-        </div>
-      </div>
-      {children}
-    </div>
-  );
-
-  // ── UI 组件：可点选标签 ──
-  const TagButton = ({ tag, selected, onClick }: { tag: { key: string; label: string }; selected: boolean; onClick: () => void }) => (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`text-xs rounded-lg px-3 py-1.5 border transition-colors ${
-        selected
-          ? 'bg-amber-600/20 border-amber-500 text-amber-300'
-          : 'bg-slate-800/50 border-slate-700/50 text-slate-900 dark:text-slate-100 hover:border-amber-500/50'
-      }`}
-    >
-      {tag.label}
-    </button>
-  );
 
   return (
     <>
