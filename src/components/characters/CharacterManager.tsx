@@ -10,6 +10,7 @@ import Button from '../ui/Button';
 import Modal from '../ui/Modal';
 import Dropdown from '../ui/Dropdown';
 import Icon from '../ui/Icon';
+import EasyCharacterBuilder from './EasyCharacterBuilder';
 
 /** 将图片 File 压缩为指定宽度的 base64 data URI */
 function compressImage(file: File): Promise<string> {
@@ -198,6 +199,9 @@ export default function CharacterManager() {
   // ─── 高级卡逆向 ───
   const [reverseLoading, setReverseLoading] = useState(false);
 
+  // ─── Easy人物卡模块化组装器 ───
+  const [easyBuilderOpen, setEasyBuilderOpen] = useState(false);
+
   const handleReverseEngineer = async (charId: string) => {
     const char = characters.find((c) => c.id === charId);
     if (!char) return;
@@ -334,6 +338,17 @@ export default function CharacterManager() {
           <Button size="sm" onClick={openAdd}><Icon name="plus" size={14} /> 添加</Button>
         </div>
       </div>
+
+      {/* Easy人物卡入口 */}
+      <button
+        onClick={() => setEasyBuilderOpen(true)}
+        className="w-full flex items-center justify-between px-3 py-2.5 text-sm bg-amber-900/20 border border-amber-700/40 rounded-lg transition-colors hover:bg-amber-900/10"
+      >
+        <span className="flex items-center gap-2 text-amber-400 font-medium">
+          🧩 Easy人物卡 · 模块化组装
+        </span>
+        <Icon name="chevron" size={14} className="text-amber-400/60" />
+      </button>
 
       {/* 导入/导出/逆向状态提示 */}
       {(importStatus || exportStatus || reverseStatus) && (
@@ -497,6 +512,22 @@ export default function CharacterManager() {
           </p>
         </div>
       </Modal>
+
+      {/* Easy人物卡模块化组装器 */}
+      <EasyCharacterBuilder
+        open={easyBuilderOpen}
+        onClose={() => setEasyBuilderOpen(false)}
+        onSave={(prompt) => {
+          // 拼装结果写入当前编辑表单（若编辑弹窗打开）或新建角色
+          if (editingId) {
+            setForm((prev) => ({ ...prev, systemPrompt: prompt }));
+          } else {
+            // 未在编辑模式时，打开编辑弹窗并填入
+            setForm((prev) => ({ ...prev, systemPrompt: prompt, name: prev.name || '新角色' }));
+            setShowModal(true);
+          }
+        }}
+      />
     </div>
   );
 }
