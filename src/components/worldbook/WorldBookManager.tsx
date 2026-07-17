@@ -1,5 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import type { WorldBook, WorldBookEntry } from '../../types';
 import { useWorldBooks } from '../../hooks/useWorldBooks';
+import { CACHE_WORLD_BOOK_LIMIT, mergeCacheWorldBookEntries } from '../../utils/cacheWorldBook';
+import { generateId } from '../../utils/id';
+import * as Stores from '../../db/stores';
 import Button from '../ui/Button';
 import Modal from '../ui/Modal';
 import Icon from '../ui/Icon';
@@ -52,15 +56,19 @@ AI 会听话地给你吐出一大串格式整齐的 [{ "keys": ... }] 代码。�
 🎉 恭喜老爷，你已经完全毕业了！开始导入专属于你的神奇世界啦！`;
 
 type JsonEntry = { keys: string[]; value: string; priority?: number };
+type JsonPatch = { operations?: unknown[] };
 
 export default function WorldBookManager() {
-  const { worldbooks, loadWorldBooks, addWorldBook, deleteWorldBook, addEntry, bulkAddEntries, updateEntry, deleteEntry } = useWorldBooks();
+  const { worldbooks, loadWorldBooks, addWorldBook, addCacheWorldBook, deleteWorldBook, addEntry, bulkAddEntries, updateEntry, deleteEntry } = useWorldBooks();
   const [showWbModal, setShowWbModal] = useState(false);
+  const [newWbKind, setNewWbKind] = useState<'manual' | 'cache'>('manual');
   const [showEntryModal, setShowEntryModal] = useState(false);
   const [wbName, setWbName] = useState('');
   const [activeWbId, setActiveWbId] = useState<string | null>(null);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [entryForm, setEntryForm] = useState({ keys: '', value: '', priority: '5' });
+  const [expandedBooks, setExpandedBooks] = useState<Record<string, boolean>>({});
+  const [promoteMsg, setPromoteMsg] = useState<Record<string, string>>({});
 
   // AI 指南弹窗
   const [guideModalOpen, setGuideModalOpen] = useState(false);
@@ -73,14 +81,33 @@ export default function WorldBookManager() {
 
   useEffect(() => { loadWorldBooks(); }, [loadWorldBooks]);
 
+  const isCacheWorldBook = (wb: WorldBook) =>
+    wb.kind === 'cache' || wb.entryLimit === CACHE_WORLD_BOOK_LIMIT || wb.name.includes('缓存世界书');
+
+  const manualWorldBooks = worldbooks.filter((wb) => !isCacheWorldBook(wb));
+  const cacheWorldBooks = worldbooks.filter(isCacheWorldBook);
+
   const handleAddWorldBook = async () => {
-    if (!wbName.trim()) return;
-    await addWorldBook(wbName.trim());
+    if (newWbKind === 'manual' && !wbName.trim()) return;
+    await (newWbKind === 'cache'
+      ? addCacheWorldBook(wbName.trim() || '<缓存世界书>')
+      : addWorldBook(wbName.trim()));
     setWbName('');
     setShowWbModal(false);
   };
 
+  const openWorldBookModal = (kind: 'manual' | 'cache') => {
+    setNewWbKind(kind);
+    setWbName(kind === 'cache' ? '<缓存世界书>' : '');
+    setShowWbModal(true);
+  };
+
   const openAddEntry = (wbId: string) => {
+    const wb = worldbooks.find((w) => w.id === wbId);
+    if (wb && isCacheWorldBook(wb) && wb.entries.length >= CACHE_WORLD_BOOK_LIMIT) {
+      setPromoteMsg((prev) => ({ ...prev, [wbId]: `缓存世界书最多 ${CACHE_WORLD_BOOK_LIMIT} 条` }));
+      return;
+    }
     setActiveWbId(wbId);
     setEditingEntryId(null);
     setEntryForm({ keys: '', value: '', priority: '5' });
@@ -99,6 +126,8 @@ export default function WorldBookManager() {
 
   const handleSaveEntry = async () => {
     if (!activeWbId || !entryForm.keys.trim() || !entryForm.value.trim()) return;
+    const wb = worldbooks.find((w) => w.id === activeWbId);
+    if (!editingEntryId && wb && isCacheWorldBook(wb) && wb.entries.length >= CACHE_WORLD_BOOK_LIMIT) return;
     const keys = entryForm.keys.replace(/，/g, ',').split(',').map((k) => k.trim()).filter(Boolean);
     const priority = parseInt(entryForm.priority) || 5;
     if (editingEntryId) {
@@ -136,6 +165,8 @@ export default function WorldBookManager() {
     }
     setImportError((prev) => ({ ...prev, [wbId]: '' }));
 
+    const targetBook = worldbooks.find((wb) => wb.id === wbId);
+    const isCache = !!targetBook && isCacheWorldBook(targetBook);
     let parsed: JsonEntry[];
     try {
       // 容错：剥离可能的 ```json ... ``` 代码块包裹
@@ -144,8 +175,21 @@ export default function WorldBookManager() {
       if (fenceMatch) {
         cleanRaw = fenceMatch[1].trim();
       }
-      parsed = JSON.parse(cleanRaw);
-      if (!Array.isArray(parsed)) throw new Error('不是数组');
+      const parsedValue = JSON.parse(cleanRaw) as JsonEntry[] | JsonPatch;
+      if (isCache && targetBook && !Array.isArray(parsedValue) && Array.isArray(parsedValue.operations)) {
+        const entries = mergeCacheWorldBookEntries(targetBook.entries, parsedValue.operations as any);
+        await Stores.updateWorldBook(wbId, {
+          kind: 'cache',
+          entryLimit: CACHE_WORLD_BOOK_LIMIT,
+          entries,
+        });
+        await loadWorldBooks();
+        setImportText((prev) => ({ ...prev, [wbId]: '' }));
+        setImportError((prev) => ({ ...prev, [wbId]: `JSON 修改完成，当前 ${entries.length}/${CACHE_WORLD_BOOK_LIMIT} 条` }));
+        return;
+      }
+      if (!Array.isArray(parsedValue)) throw new Error('不是数组');
+      parsed = parsedValue;
     } catch {
       setImportError((prev) => ({ ...prev, [wbId]: 'JSON 格式错误，请检查' }));
       return;
@@ -184,7 +228,9 @@ export default function WorldBookManager() {
       setImporting((prev) => ({ ...prev, [wbId]: false }));
       setImportText((prev) => ({ ...prev, [wbId]: '' }));
 
-      if (skipped > 0) {
+      if (isCache && added === 0) {
+        setImportError((prev) => ({ ...prev, [wbId]: `缓存世界书最多 ${CACHE_WORLD_BOOK_LIMIT} 条，请先删除或升华条目` }));
+      } else if (skipped > 0 || added < validEntries.length) {
         setImportError((prev) => ({ ...prev, [wbId]: `导入完成: ${added} 条成功, ${skipped} 条跳过` }));
       } else {
         setImportError((prev) => ({ ...prev, [wbId]: `成功导入 ${added} 条` }));
@@ -193,6 +239,212 @@ export default function WorldBookManager() {
       setImporting((prev) => ({ ...prev, [wbId]: false }));
       setImportError((prev) => ({ ...prev, [wbId]: '导入失败，请重试' }));
     }
+  };
+
+  const handlePromoteEntry = async (cacheWbId: string, entry: WorldBookEntry) => {
+    setPromoteMsg((prev) => ({ ...prev, [entry.id]: '升华中...' }));
+    try {
+      const characters = await Stores.getAllCharacters();
+      const boundCharacters = characters.filter((char) => char.cacheWorldBookId === cacheWbId);
+      if (boundCharacters.length === 0) {
+        setPromoteMsg((prev) => ({ ...prev, [entry.id]: '请先在角色卡绑定该缓存世界书' }));
+        return;
+      }
+
+      for (const char of boundCharacters) {
+        let manualWbId = char.worldBookId;
+        let manualBook = manualWbId ? await Stores.getWorldBookById(manualWbId) : undefined;
+        if (!manualBook) {
+          manualWbId = generateId();
+          manualBook = {
+            id: manualWbId,
+            name: `${char.name}的A世界书`,
+            kind: 'manual',
+            entries: [],
+          };
+          await Stores.addWorldBook(manualBook);
+          await Stores.updateCharacter(char.id, { worldBookId: manualWbId });
+        }
+        if (!manualWbId) throw new Error('A 世界书 ID 创建失败');
+
+        const entryKeys = new Set(entry.keys.map((key) => key.toLowerCase()));
+        const filtered = manualBook.entries.filter(
+          (existing) => !existing.keys.some((key) => entryKeys.has(key.toLowerCase()))
+        );
+        await Stores.updateWorldBook(manualWbId, {
+          entries: [
+            ...filtered,
+            { ...entry, id: generateId() },
+          ],
+        });
+      }
+
+      await deleteEntry(cacheWbId, entry.id);
+      await loadWorldBooks();
+      setPromoteMsg((prev) => ({ ...prev, [entry.id]: `已升华到 ${boundCharacters.length} 个角色的 A 世界书` }));
+    } catch (e) {
+      console.error('升华缓存世界书条目失败:', e);
+      setPromoteMsg((prev) => ({ ...prev, [entry.id]: '升华失败，请重试' }));
+    }
+  };
+
+  const renderWorldBookCard = (wb: WorldBook) => {
+    const isCache = isCacheWorldBook(wb);
+    const isExpanded = expandedBooks[wb.id] ?? false;
+    const atCacheLimit = isCache && wb.entries.length >= CACHE_WORLD_BOOK_LIMIT;
+
+    return (
+      <div key={wb.id} className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
+        <div className="flex items-center justify-between gap-2">
+          <button
+            onClick={() => setExpandedBooks((prev) => ({ ...prev, [wb.id]: !isExpanded }))}
+            className="flex items-center gap-2 min-w-0 text-left"
+          >
+            <Icon name="chevron" size={12} className={`text-slate-500 transition-transform ${isExpanded ? 'rotate-180' : '-rotate-90'}`} />
+            <span className="text-sm font-medium text-slate-200 truncate">
+              {wb.name}
+              <span className="ml-1.5 text-[10px] text-slate-500">
+                ({wb.entries.length}{isCache ? `/${CACHE_WORLD_BOOK_LIMIT}` : ''} 条)
+              </span>
+            </span>
+            {isCache && (
+              <span className="px-1.5 py-0.5 rounded bg-cyan-600/15 text-cyan-300 text-[10px] whitespace-nowrap">
+                缓存
+              </span>
+            )}
+          </button>
+          <div className="flex items-center gap-1">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => openAddEntry(wb.id)}
+              disabled={atCacheLimit}
+              title={atCacheLimit ? `缓存世界书最多 ${CACHE_WORLD_BOOK_LIMIT} 条` : '添加条目'}
+            >
+              <Icon name="plus" size={13} />
+            </Button>
+            <button onClick={() => deleteWorldBook(wb.id)} className="text-slate-500 hover:text-red-400 p-0.5" title="删除世界书">
+              <Icon name="trash" size={13} />
+            </button>
+          </div>
+        </div>
+
+        {promoteMsg[wb.id] && (
+          <div className="mt-2 text-[11px] text-cyan-300">{promoteMsg[wb.id]}</div>
+        )}
+
+        {isExpanded && (
+          <>
+            <div className="mt-2">
+              {wb.entries.length === 0 ? (
+                <div className="py-2 border-t border-slate-700/30 text-xs text-slate-500">暂无条目</div>
+              ) : (
+                wb.entries.map((entry) => (
+                  <div key={entry.id} className="flex items-start justify-between py-1 border-t border-slate-700/30 text-xs">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {entry.keys.map((k) => (
+                          <span key={k} className="px-1.5 py-0.5 bg-amber-600/20 text-amber-400 rounded text-[10px]">{k}</span>
+                        ))}
+                        <span className="text-slate-500">优先级:{entry.priority}</span>
+                      </div>
+                      <div className="text-slate-400 mt-0.5 truncate">{entry.value}</div>
+                      {promoteMsg[entry.id] && (
+                        <div className="text-[10px] text-cyan-300 mt-0.5">{promoteMsg[entry.id]}</div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1 ml-1">
+                      {isCache && (
+                        <button
+                          onClick={() => handlePromoteEntry(wb.id, entry)}
+                          className="text-cyan-400 hover:text-cyan-200 inline-flex items-center gap-0.5"
+                          title="升华到绑定角色的 A 世界书"
+                        >
+                          <Icon name="branch" size={11} />升华
+                        </button>
+                      )}
+                      <button onClick={() => openEditEntry(wb.id, entry.id)} className="text-slate-500 hover:text-slate-300" title="编辑条目"><Icon name="edit" size={11} /></button>
+                      <button onClick={() => deleteEntry(wb.id, entry.id)} className="text-slate-500 hover:text-red-400" title="删除条目"><Icon name="trash" size={11} /></button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="mt-2 border-t border-slate-700/30 pt-2 flex items-center gap-3">
+              <button
+                onClick={() => setImportOpen((prev) => ({ ...prev, [wb.id]: !prev[wb.id] }))}
+                className="flex items-center gap-1.5 text-[11px] text-slate-500 hover:text-amber-400 transition-colors"
+              >
+                <Icon name="chevron" size={10} className={`transition-transform ${importOpen[wb.id] ? 'rotate-90' : ''}`} />
+                <Icon name="send" size={12} />
+                粘贴 JSON 批量导入
+              </button>
+
+              <button
+                onClick={async () => {
+                  const exportData = wb.entries.map((e) => ({
+                    keys: e.keys,
+                    value: e.value,
+                    priority: e.priority,
+                  }));
+                  if (exportData.length === 0) {
+                    setExportMsg((prev) => ({ ...prev, [wb.id]: '世界书为空' }));
+                    setTimeout(() => setExportMsg((prev) => ({ ...prev, [wb.id]: '' })), 2000);
+                    return;
+                  }
+                  const json = JSON.stringify(exportData, null, 2);
+                  try {
+                    await navigator.clipboard.writeText(json);
+                  } catch {
+                    const el = document.createElement('textarea');
+                    el.value = json;
+                    document.body.appendChild(el);
+                    el.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(el);
+                  }
+                  setExportMsg((prev) => ({ ...prev, [wb.id]: `已复制 ${exportData.length} 条到剪贴板` }));
+                  setTimeout(() => setExportMsg((prev) => ({ ...prev, [wb.id]: '' })), 2500);
+                }}
+                className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-emerald-400 transition-colors ml-2"
+                title="导出当前世界书为 JSON 到剪贴板"
+              >
+                <Icon name="copy" size={11} />
+                {exportMsg[wb.id] ? exportMsg[wb.id] : '导出 JSON'}
+              </button>
+            </div>
+
+            {importOpen[wb.id] && (
+              <div className="mt-2 space-y-2 border-t border-slate-700/30 pt-2">
+                <textarea
+                  className="input-field min-h-[100px] text-xs font-mono"
+                  value={importText[wb.id] || ''}
+                  onChange={(e) => setImportText((prev) => ({ ...prev, [wb.id]: e.target.value }))}
+                  placeholder={isCache
+                    ? `粘贴 JSON 数组或修改对象，例如：\n{"operations":[{"op":"upsert","keys":["关键词"],"value":"设定内容","priority":5},{"op":"delete","key":"旧关键词"}]}`
+                    : `粘贴 AI 生成的 JSON 数组，例如：\n[\n  { "keys": ["关键词"], "value": "设定内容", "priority": 5 }\n]`}
+                />
+                <div className="flex items-center justify-between gap-2">
+                  {importError[wb.id] && (
+                    <span className={`text-[11px] ${importError[wb.id].startsWith('导入完成') || importError[wb.id].startsWith('成功') ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {importError[wb.id]}
+                    </span>
+                  )}
+                  <Button
+                    size="sm"
+                    onClick={() => handleBulkImport(wb.id)}
+                    disabled={importing[wb.id]}
+                  >
+                    {importing[wb.id] ? '导入中...' : '导入'}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -242,120 +494,31 @@ export default function WorldBookManager() {
       {/* ===== 世界书列表 ===== */}
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-semibold text-slate-300">世界书</h3>
-        <Button size="sm" onClick={() => setShowWbModal(true)}><Icon name="plus" size={14} /> 新建</Button>
+        <Button size="sm" onClick={() => openWorldBookModal('manual')}><Icon name="plus" size={14} /> 新建</Button>
       </div>
 
-      {worldbooks.map((wb) => (
-        <div key={wb.id} className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-slate-200">
-              {wb.name}
-              <span className="ml-1.5 text-[10px] text-slate-500">({wb.entries.length} 条)</span>
-            </span>
-            <div className="flex items-center gap-1">
-              <Button size="sm" variant="ghost" onClick={() => openAddEntry(wb.id)} title="添加条目">
-                <Icon name="plus" size={13} />
-              </Button>
-              <button onClick={() => deleteWorldBook(wb.id)} className="text-slate-500 hover:text-red-400 p-0.5">
-                <Icon name="trash" size={13} />
-              </button>
-            </div>
+      <div className="space-y-2">
+        {manualWorldBooks.map(renderWorldBookCard)}
+      </div>
+
+      <div className="flex items-center justify-between mt-4 mb-3">
+        <h3 className="text-sm font-semibold text-cyan-300">&lt;缓存世界书&gt;</h3>
+        <Button size="sm" variant="secondary" onClick={() => openWorldBookModal('cache')}>
+          <Icon name="plus" size={14} /> 新建缓存
+        </Button>
+      </div>
+
+      <div className="space-y-2">
+        {cacheWorldBooks.map(renderWorldBookCard)}
+        {cacheWorldBooks.length === 0 && (
+          <div className="text-xs text-slate-500 bg-slate-900/40 border border-slate-800 rounded-lg p-3">
+            暂无缓存世界书
           </div>
-
-          {/* 条目列表 */}
-          {wb.entries.map((entry) => (
-            <div key={entry.id} className="flex items-start justify-between py-1 border-t border-slate-700/30 text-xs">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5">
-                  {entry.keys.map((k) => (
-                    <span key={k} className="px-1.5 py-0.5 bg-amber-600/20 text-amber-400 rounded text-[10px]">{k}</span>
-                  ))}
-                  <span className="text-slate-500">优先级:{entry.priority}</span>
-                </div>
-                <div className="text-slate-400 mt-0.5 truncate">{entry.value}</div>
-              </div>
-              <div className="flex items-center gap-0.5 ml-1">
-                <button onClick={() => openEditEntry(wb.id, entry.id)} className="text-slate-500 hover:text-slate-300"><Icon name="edit" size={11} /></button>
-                <button onClick={() => deleteEntry(wb.id, entry.id)} className="text-slate-500 hover:text-red-400"><Icon name="trash" size={11} /></button>
-              </div>
-            </div>
-          ))}
-
-          {/* ===== JSON 批量导入 / 导出 ===== */}
-          <div className="mt-2 border-t border-slate-700/30 pt-2 flex items-center gap-3">
-            <button
-              onClick={() => setImportOpen((prev) => ({ ...prev, [wb.id]: !prev[wb.id] }))}
-              className="flex items-center gap-1.5 text-[11px] text-slate-500 hover:text-amber-400 transition-colors"
-            >
-              <Icon name="chevron" size={10} className={`transition-transform ${importOpen[wb.id] ? 'rotate-90' : ''}`} />
-              <Icon name="send" size={12} />
-              粘贴 JSON 批量导入
-            </button>
-
-            <button
-              onClick={async () => {
-                const exportData = wb.entries.map((e) => ({
-                  keys: e.keys,
-                  value: e.value,
-                  priority: e.priority,
-                }));
-                if (exportData.length === 0) {
-                  setExportMsg((prev) => ({ ...prev, [wb.id]: '世界书为空' }));
-                  setTimeout(() => setExportMsg((prev) => ({ ...prev, [wb.id]: '' })), 2000);
-                  return;
-                }
-                const json = JSON.stringify(exportData, null, 2);
-                try {
-                  await navigator.clipboard.writeText(json);
-                } catch {
-                  const el = document.createElement('textarea');
-                  el.value = json;
-                  document.body.appendChild(el);
-                  el.select();
-                  document.execCommand('copy');
-                  document.body.removeChild(el);
-                }
-                setExportMsg((prev) => ({ ...prev, [wb.id]: `已复制 ${exportData.length} 条到剪贴板` }));
-                setTimeout(() => setExportMsg((prev) => ({ ...prev, [wb.id]: '' })), 2500);
-              }}
-              className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-emerald-400 transition-colors ml-2"
-              title="导出当前世界书为 JSON 到剪贴板"
-            >
-              <Icon name="copy" size={11} />
-              {exportMsg[wb.id] ? exportMsg[wb.id] : '导出 JSON'}
-            </button>
-          </div>
-
-            {/* 可折叠导入区跟在上面的按钮行之后 */}
-            {importOpen[wb.id] && (
-              <div className="mt-2 space-y-2 border-t border-slate-700/30 pt-2">
-                <textarea
-                  className="input-field min-h-[100px] text-xs font-mono"
-                  value={importText[wb.id] || ''}
-                  onChange={(e) => setImportText((prev) => ({ ...prev, [wb.id]: e.target.value }))}
-                  placeholder={`粘贴 AI 生成的 JSON 数组，例如：\n[\n  { "keys": ["关键词"], "value": "设定内容", "priority": 5 }\n]`}
-                />
-                <div className="flex items-center justify-between gap-2">
-                  {importError[wb.id] && (
-                    <span className={`text-[11px] ${importError[wb.id].startsWith('导入完成') || importError[wb.id].startsWith('成功') ? 'text-emerald-400' : 'text-red-400'}`}>
-                      {importError[wb.id]}
-                    </span>
-                  )}
-                  <Button
-                    size="sm"
-                    onClick={() => handleBulkImport(wb.id)}
-                    disabled={importing[wb.id]}
-                  >
-                    {importing[wb.id] ? '导入中...' : '导入'}
-                  </Button>
-                </div>
-              </div>
-            )}
-        </div>
-      ))}
+        )}
+      </div>
 
       {/* New WorldBook Modal */}
-      <Modal open={showWbModal} onClose={() => setShowWbModal(false)} title="新建世界书">
+      <Modal open={showWbModal} onClose={() => setShowWbModal(false)} title={newWbKind === 'cache' ? '新建<缓存世界书>' : '新建世界书'}>
         <div className="space-y-3">
           <input className="input-field" value={wbName} onChange={(e) => setWbName(e.target.value)} placeholder="世界书名称" />
           <div className="flex justify-end gap-2">

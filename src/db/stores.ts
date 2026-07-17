@@ -3,6 +3,7 @@ import {
   modelsStore,
   charactersStore,
   conversationsStore,
+  conversationFoldersStore,
   messageNodesStore,
   worldbooksStore,
   globalStatesStore,
@@ -12,6 +13,7 @@ import type {
   ModelConfig,
   Character,
   Conversation,
+  ConversationFolder,
   MessageNode,
   WorldBook,
   GlobalState,
@@ -189,6 +191,59 @@ export async function updateConversation(
 export async function deleteConversation(id: string): Promise<void> {
   await mutateStore<Conversation>(conversationsStore, (data) =>
     data.filter((c) => c.id !== id)
+  );
+}
+
+/* ──────────────── Conversation Folders ──────────────── */
+
+export async function getAllConversationFolders(): Promise<ConversationFolder[]> {
+  return getStoreData<ConversationFolder>(conversationFoldersStore);
+}
+
+export async function getConversationFolderById(
+  id: string
+): Promise<ConversationFolder | undefined> {
+  const all = await getAllConversationFolders();
+  return all.find((f) => f.id === id);
+}
+
+export async function setConversationFolders(
+  folders: ConversationFolder[]
+): Promise<void> {
+  await withStoreLock(conversationFoldersStore, async () => {
+    await setStoreData(conversationFoldersStore, folders);
+  });
+}
+
+export async function addConversationFolder(folder: ConversationFolder): Promise<void> {
+  await mutateStore<ConversationFolder>(conversationFoldersStore, (data) => {
+    data.push(folder);
+    return data;
+  });
+}
+
+export async function updateConversationFolder(
+  id: string,
+  updates: Partial<ConversationFolder>
+): Promise<void> {
+  await mutateStore<ConversationFolder>(conversationFoldersStore, (data) => {
+    const idx = data.findIndex((f) => f.id === id);
+    if (idx !== -1) {
+      data[idx] = { ...data[idx], ...updates };
+    }
+    return data;
+  });
+}
+
+export async function mutateConversationFolders(
+  updater: (folders: ConversationFolder[]) => ConversationFolder[]
+): Promise<void> {
+  await mutateStore<ConversationFolder>(conversationFoldersStore, updater);
+}
+
+export async function deleteConversationFolder(id: string): Promise<void> {
+  await mutateStore<ConversationFolder>(conversationFoldersStore, (data) =>
+    data.filter((f) => f.id !== id)
   );
 }
 
@@ -377,6 +432,7 @@ export interface UISettings {
   thinkingEnabled?: boolean;
   debugMode?: boolean;
   scribeEnabled?: boolean;
+  scribeCacheWorldBookEnabled?: boolean;
   scribeRounds?: number;
   lowRateMode?: boolean;
   // 高级提示词模板（空=用默认）
@@ -391,6 +447,7 @@ export interface UISettings {
   tplImplantMemoryPrefix?: string;
   tplImplantScribePrefix?: string;
   tplDistilledNodePrefix?: string;
+  tplCacheWorldBookPrompt?: string;
   tplReverseEngineer?: string;
 }
 
@@ -423,6 +480,7 @@ export async function setUISettings(settings: Partial<UISettings>): Promise<void
         thinkingEnabled: settings.thinkingEnabled ?? existing.thinkingEnabled,
         debugMode: settings.debugMode ?? existing.debugMode,
         scribeEnabled: settings.scribeEnabled ?? existing.scribeEnabled,
+        scribeCacheWorldBookEnabled: settings.scribeCacheWorldBookEnabled ?? existing.scribeCacheWorldBookEnabled,
         scribeRounds: settings.scribeRounds ?? existing.scribeRounds,
         lowRateMode: settings.lowRateMode ?? existing.lowRateMode,
         tplUserWrapper: settings.tplUserWrapper ?? existing.tplUserWrapper,
@@ -436,6 +494,7 @@ export async function setUISettings(settings: Partial<UISettings>): Promise<void
         tplImplantMemoryPrefix: settings.tplImplantMemoryPrefix ?? existing.tplImplantMemoryPrefix,
         tplImplantScribePrefix: settings.tplImplantScribePrefix ?? existing.tplImplantScribePrefix,
         tplDistilledNodePrefix: settings.tplDistilledNodePrefix ?? existing.tplDistilledNodePrefix,
+        tplCacheWorldBookPrompt: settings.tplCacheWorldBookPrompt ?? existing.tplCacheWorldBookPrompt,
         tplReverseEngineer: settings.tplReverseEngineer ?? existing.tplReverseEngineer,
       };
       await uiSettingsStore.setItem('settings', merged);

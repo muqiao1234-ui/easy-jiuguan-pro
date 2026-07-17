@@ -47,6 +47,7 @@ export default function ChatArea({
     scribeTriggerInterval: DEFAULT_SCRIBE_TRIGGER_INTERVAL,
     scribeSystemPrompt: SCRIBE_SYSTEM_PROMPT,
     scribeModelId: null,
+    scribeCacheWorldBookEnabled: state.scribeCacheWorldBookEnabled,
   });
   const [localNodes, setLocalNodes] = React.useState<MessageNode[]>([]);
   const [selectorOpen, setSelectorOpen] = useState(false);
@@ -66,11 +67,12 @@ export default function ChatArea({
               scribeTriggerInterval: gs?.scribeTriggerInterval ?? DEFAULT_SCRIBE_TRIGGER_INTERVAL,
               scribeSystemPrompt: gs?.scribeSystemPrompt ?? SCRIBE_SYSTEM_PROMPT,
               scribeModelId: gs?.scribeModelId ?? null,
+              scribeCacheWorldBookEnabled: gs?.scribeCacheWorldBookEnabled ?? state.scribeCacheWorldBookEnabled,
             });
           });
       });
     }
-  }, [state.currentConversationId, state.activeView]);
+  }, [state.currentConversationId, state.activeView, state.scribeCacheWorldBookEnabled]);
 
   useEffect(() => { loadModels(); }, [loadModels]);
 
@@ -233,6 +235,7 @@ export default function ChatArea({
     distillModelId: state.currentDistillModelId,
     scribeModelId: localScribeConfig.scribeModelId || state.currentScribeModelId,
     scribeEnabled: localScribeConfig.scribeEnabled,
+    scribeCacheWorldBookEnabled: localScribeConfig.scribeCacheWorldBookEnabled,
     scribeTriggerInterval: localScribeConfig.scribeTriggerInterval,
     scribeRounds: state.scribeRounds,
     scribeMode: state.scribeMode,
@@ -268,6 +271,7 @@ export default function ChatArea({
     tplImplantMemoryPrefix: state.tplImplantMemoryPrefix,
     tplImplantScribePrefix: state.tplImplantScribePrefix,
     tplDistilledNodePrefix: state.tplDistilledNodePrefix,
+    tplCacheWorldBookPrompt: state.tplCacheWorldBookPrompt,
   }), [
     state.currentConversationId,
     characterA,
@@ -276,6 +280,7 @@ export default function ChatArea({
     state.currentDistillModelId,
     localScribeConfig.scribeModelId,
     localScribeConfig.scribeEnabled,
+    localScribeConfig.scribeCacheWorldBookEnabled,
     localScribeConfig.scribeTriggerInterval,
     localScribeConfig.scribeSystemPrompt,
     state.currentScribeModelId,
@@ -294,6 +299,7 @@ export default function ChatArea({
     state.tplWorldBookPrefix, state.tplDistilledPrefix, state.tplStateBookPrefix,
     state.tplEavesdropAppend, state.tplGalgameCharInjection,
     state.tplImplantMemoryPrefix, state.tplImplantScribePrefix, state.tplDistilledNodePrefix,
+    state.tplCacheWorldBookPrompt,
     // 以下函数均经各自 hook 的 useCallback 稳定化，引用不变
     getModelById,
     addNode,
@@ -405,7 +411,7 @@ export default function ChatArea({
         if (!wbId) {
           // 角色无世界书或世界书已失效，创建一个
           wbId = generateId();
-          const newWb = { id: wbId, name: `${observer.name}的世界书`, entries: [] };
+          const newWb = { id: wbId, name: `${observer.name}的世界书`, kind: 'manual' as const, entries: [] };
           await Stores.addWorldBook(newWb);
           await Stores.updateCharacter(observer.id, { worldBookId: wbId });
         }

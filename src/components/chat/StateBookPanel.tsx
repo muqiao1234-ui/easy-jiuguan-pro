@@ -4,6 +4,13 @@ import { useApp } from '../../hooks/useApp';
 import { useGlobalStates, type ScribeConfig } from '../../hooks/useGlobalStates';
 import { SCRIBE_SYSTEM_PROMPT, DEFAULT_TPL_GALGAME_CHAR_INJECTION, buildSamplingParams } from '../../utils/constants';
 import {
+  CACHE_WORLD_BOOK_LIMIT,
+  buildCacheWorldBookPrompt,
+  extractCacheWorldBookPatch,
+  mergeCacheWorldBookEntries,
+  normalizeCacheWorldBook,
+} from '../../utils/cacheWorldBook';
+import {
   GALGAME_MAX_TOKENS,
   buildGalgamePrompt,
   cleanDialogueText,
@@ -75,6 +82,13 @@ export default function StateBookPanel({
         .find((n) => (n.role === 'charA' || n.role === 'charB') && !n.isArchived);
       if (!latestAssistant) return;
 
+      const conversation = await Stores.getConversationById(conversationId);
+      const characterId =
+        latestAssistant.role === 'charA'
+          ? conversation?.characterAId
+          : conversation?.characterBId;
+      const character = characterId ? await Stores.getCharacterById(characterId) : undefined;
+
       if (state.scribeEngine === 'galgame') {
         // Galgame 数值引擎：四段式上下文（与 useChat 自动触发保持一致）
         const lastTwo = sorted.slice(-4);
@@ -87,17 +101,35 @@ export default function StateBookPanel({
         const charName = latestAssistant.senderName || '角色';
         const prompt = buildGalgamePrompt(charName, localGalgamePrompt);
 
-        // 查找角色卡，获取 systemPrompt 作为角色性格底色注入
-        const conversation = await Stores.getConversationById(conversationId);
-        const characterId =
-          latestAssistant.role === 'charA'
-            ? conversation?.characterAId
-            : conversation?.characterBId;
-        const character = characterId ? await Stores.getCharacterById(characterId) : undefined;
-
         const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
           { role: 'system', content: prompt },
         ];
+        let cacheBookId: string | null = null;
+        if (scribeConfig.scribeCacheWorldBookEnabled && character?.cacheWorldBookId) {
+          const cacheBookRaw = await Stores.getWorldBookById(character.cacheWorldBookId);
+          if (cacheBookRaw) {
+            const cacheBook = normalizeCacheWorldBook(cacheBookRaw);
+            cacheBookId = cacheBook.id;
+            if (
+              cacheBook.kind !== cacheBookRaw.kind ||
+              cacheBook.entryLimit !== cacheBookRaw.entryLimit ||
+              cacheBook.entries.length !== cacheBookRaw.entries.length
+            ) {
+              await Stores.updateWorldBook(cacheBook.id, {
+                kind: 'cache',
+                entryLimit: CACHE_WORLD_BOOK_LIMIT,
+                entries: cacheBook.entries,
+              });
+            }
+            const manualBook = character.worldBookId
+              ? (await Stores.getWorldBookById(character.worldBookId)) || null
+              : null;
+            messages.push({
+              role: 'system',
+              content: buildCacheWorldBookPrompt(cacheBook, manualBook, state.tplCacheWorldBookPrompt),
+            });
+          }
+        }
 
         // 角色 systemPrompt 作为"伪装 user 消息"注入
         if (character?.systemPrompt?.trim()) {
@@ -137,9 +169,21 @@ export default function StateBookPanel({
         const content = data.choices?.[0]?.message?.content || '';
         const reasoning = data.choices?.[0]?.message?.reasoning_content || '';
         const rawContent = content || reasoning || data.choices?.[0]?.text || '';
-        let galgameData = parseGalgameResponse(rawContent, charName);
+        const { displayText, patch } = extractCacheWorldBookPatch(rawContent);
+        if (cacheBookId && patch?.operations?.length) {
+          const latestBook = await Stores.getWorldBookById(cacheBookId);
+          if (latestBook) {
+            const normalized = normalizeCacheWorldBook(latestBook);
+            await Stores.updateWorldBook(cacheBookId, {
+              kind: 'cache',
+              entryLimit: CACHE_WORLD_BOOK_LIMIT,
+              entries: mergeCacheWorldBookEntries(normalized.entries, patch.operations),
+            });
+          }
+        }
+        let galgameData = parseGalgameResponse(displayText || rawContent, charName);
         if (!galgameData && !content && reasoning) {
-          galgameData = parseGalgameResponse(reasoning, charName);
+          galgameData = parseGalgameResponse(extractCacheWorldBookPatch(reasoning).displayText || reasoning, charName);
         }
         const galgameTokenCost = data.usage?.total_tokens;
         if (galgameData) {
@@ -161,6 +205,32 @@ export default function StateBookPanel({
           { role: 'system' as const, content: scribeConfig.scribeSystemPrompt || SCRIBE_SYSTEM_PROMPT },
           { role: 'user' as const, content: dialogueText },
         ];
+        let cacheBookId: string | null = null;
+        if (scribeConfig.scribeCacheWorldBookEnabled && character?.cacheWorldBookId) {
+          const cacheBookRaw = await Stores.getWorldBookById(character.cacheWorldBookId);
+          if (cacheBookRaw) {
+            const cacheBook = normalizeCacheWorldBook(cacheBookRaw);
+            cacheBookId = cacheBook.id;
+            if (
+              cacheBook.kind !== cacheBookRaw.kind ||
+              cacheBook.entryLimit !== cacheBookRaw.entryLimit ||
+              cacheBook.entries.length !== cacheBookRaw.entries.length
+            ) {
+              await Stores.updateWorldBook(cacheBook.id, {
+                kind: 'cache',
+                entryLimit: CACHE_WORLD_BOOK_LIMIT,
+                entries: cacheBook.entries,
+              });
+            }
+            const manualBook = character.worldBookId
+              ? (await Stores.getWorldBookById(character.worldBookId)) || null
+              : null;
+            messages.splice(1, 0, {
+              role: 'system' as const,
+              content: buildCacheWorldBookPrompt(cacheBook, manualBook, state.tplCacheWorldBookPrompt),
+            });
+          }
+        }
 
         const resp = await apiFetch(model.baseUrl, {
           method: 'POST',
@@ -177,7 +247,20 @@ export default function StateBookPanel({
         });
         if (!resp.ok) return;
         const data = await resp.json();
-        const newContent = data.choices?.[0]?.message?.content || '';
+        const rawContent = data.choices?.[0]?.message?.content || '';
+        const { displayText, patch } = extractCacheWorldBookPatch(rawContent);
+        const newContent = displayText || (!patch ? rawContent : '');
+        if (cacheBookId && patch?.operations?.length) {
+          const latestBook = await Stores.getWorldBookById(cacheBookId);
+          if (latestBook) {
+            const normalized = normalizeCacheWorldBook(latestBook);
+            await Stores.updateWorldBook(cacheBookId, {
+              kind: 'cache',
+              entryLimit: CACHE_WORLD_BOOK_LIMIT,
+              entries: mergeCacheWorldBookEntries(normalized.entries, patch.operations),
+            });
+          }
+        }
         if (newContent.trim()) {
           await Stores.updateMessageNode(latestAssistant.id, {
             scribeUpdate: {
@@ -195,7 +278,7 @@ export default function StateBookPanel({
     } finally {
       setIsSummarizing(false);
     }
-  }, [conversationId, scribeConfig, state.scribeEngine, state.scribeMode, state.contextConfig.recentRounds, localGalgamePrompt, onNodesRefresh]);
+  }, [conversationId, scribeConfig, state.scribeEngine, state.scribeMode, state.tplCacheWorldBookPrompt, state.contextConfig.recentRounds, localGalgamePrompt, onNodesRefresh]);
 
   if (!conversationId) {
     return (
@@ -234,9 +317,9 @@ export default function StateBookPanel({
 
       {/* Basic Settings */}
       <div className="space-y-3 p-3 bg-slate-900/40 rounded-lg border border-slate-800">
-        <div className="flex items-center gap-4 flex-wrap">
-          <Toggle
-            checked={scribeConfig.scribeEnabled}
+          <div className="flex items-center gap-4 flex-wrap">
+            <Toggle
+              checked={scribeConfig.scribeEnabled}
             onChange={(v) => {
               if (conversationId) {
                 updateScribeConfig(conversationId, { scribeEnabled: v });
@@ -244,9 +327,19 @@ export default function StateBookPanel({
               }
             }}
             label="启用状态书"
-          />
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-400">显示间隔:</span>
+            />
+            <Toggle
+              checked={scribeConfig.scribeCacheWorldBookEnabled}
+              onChange={(v) => {
+                if (conversationId) {
+                  updateScribeConfig(conversationId, { scribeCacheWorldBookEnabled: v });
+                  onScribeConfigChange(conversationId, { scribeCacheWorldBookEnabled: v });
+                }
+              }}
+              label="维护<缓存世界书>"
+            />
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400">显示间隔:</span>
             <input
               type="number"
               min={1}

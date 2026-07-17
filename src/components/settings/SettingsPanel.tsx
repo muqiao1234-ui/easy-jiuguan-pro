@@ -18,8 +18,127 @@ import {
   DEFAULT_TPL_IMPLANT_MEMORY_PREFIX,
   DEFAULT_TPL_IMPLANT_SCRIBE_PREFIX,
   DEFAULT_TPL_DISTILLED_NODE_PREFIX,
+  DEFAULT_TPL_CACHE_WORLD_BOOK_PROMPT,
   DEFAULT_TPL_REVERSE_ENGINEER,
 } from '../../utils/constants';
+
+type BackupData = Partial<Record<'models' | 'characters' | 'conversations' | 'conversation_folders' | 'message_nodes' | 'worldbooks' | 'global_states', unknown[]>>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function assertStringRecordArray(data: Record<string, unknown>, key: keyof BackupData): unknown[] | undefined {
+  const value = data[key];
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new Error(`${key} 必须是数组`);
+  return value;
+}
+
+function assertObjectArray(name: string, value: unknown[] | undefined): unknown[] | undefined {
+  if (!value) return undefined;
+  for (const item of value) {
+    if (!isRecord(item)) throw new Error(`${name} 中存在非对象条目`);
+  }
+  return value;
+}
+
+function assertStringField(item: unknown, field: string, name: string) {
+  if (!isRecord(item) || typeof item[field] !== 'string') {
+    throw new Error(`${name} 缺少字符串字段 ${field}`);
+  }
+}
+
+function normalizeBackupData(raw: unknown): BackupData {
+  if (!isRecord(raw)) throw new Error('备份文件根节点必须是对象');
+
+  const models = assertObjectArray('models', assertStringRecordArray(raw, 'models'))?.map((model) => {
+    assertStringField(model, 'id', 'models');
+    assertStringField(model, 'name', 'models');
+    return { ...(model as Record<string, unknown>), apiKey: '' };
+  });
+
+  const characters = assertObjectArray('characters', assertStringRecordArray(raw, 'characters'))?.map((char) => {
+    assertStringField(char, 'id', 'characters');
+    assertStringField(char, 'name', 'characters');
+    assertStringField(char, 'systemPrompt', 'characters');
+    return char;
+  });
+
+  const conversations = assertObjectArray('conversations', assertStringRecordArray(raw, 'conversations'))?.map((conv) => {
+    assertStringField(conv, 'id', 'conversations');
+    assertStringField(conv, 'title', 'conversations');
+    assertStringField(conv, 'characterAId', 'conversations');
+    assertStringField(conv, 'characterBId', 'conversations');
+    return conv;
+  });
+
+  const conversationFolders = assertObjectArray('conversation_folders', assertStringRecordArray(raw, 'conversation_folders'))?.map((folder) => {
+    assertStringField(folder, 'id', 'conversation_folders');
+    assertStringField(folder, 'name', 'conversation_folders');
+    const ids = (folder as Record<string, unknown>).conversationIds;
+    if (!Array.isArray(ids)) throw new Error('conversation_folders 缺少 conversationIds 数组');
+    return {
+      ...(folder as Record<string, unknown>),
+      conversationIds: ids.filter((id): id is string => typeof id === 'string'),
+      isCollapsed: Boolean((folder as Record<string, unknown>).isCollapsed),
+      createdAt: Number((folder as Record<string, unknown>).createdAt) || Date.now(),
+    };
+  });
+
+  const messageNodes = assertObjectArray('message_nodes', assertStringRecordArray(raw, 'message_nodes'))?.map((node) => {
+    assertStringField(node, 'id', 'message_nodes');
+    assertStringField(node, 'conversationId', 'message_nodes');
+    assertStringField(node, 'role', 'message_nodes');
+    assertStringField(node, 'content', 'message_nodes');
+    return node;
+  });
+
+  const worldbooks = assertObjectArray('worldbooks', assertStringRecordArray(raw, 'worldbooks'))?.map((wb) => {
+    assertStringField(wb, 'id', 'worldbooks');
+    assertStringField(wb, 'name', 'worldbooks');
+    if (!Array.isArray((wb as Record<string, unknown>).entries)) {
+      throw new Error('worldbooks 缺少 entries 数组');
+    }
+    return wb;
+  });
+
+  const globalStates = assertObjectArray('global_states', assertStringRecordArray(raw, 'global_states'))?.map((state) => {
+    assertStringField(state, 'conversationId', 'global_states');
+    return state;
+  });
+
+  const normalized: BackupData = { models, characters, conversations, conversation_folders: conversationFolders, message_nodes: messageNodes, worldbooks, global_states: globalStates };
+  if (!Object.values(normalized).some(Boolean)) throw new Error('备份文件没有可导入的数据表');
+  return normalized;
+}
+
+async function importBackupData(raw: unknown) {
+  const data = normalizeBackupData(raw);
+  const db = await import('../../db/index');
+  const targets = [
+    { key: 'models' as const, store: db.modelsStore, value: data.models },
+    { key: 'characters' as const, store: db.charactersStore, value: data.characters },
+    { key: 'conversations' as const, store: db.conversationsStore, value: data.conversations },
+    { key: 'conversation_folders' as const, store: db.conversationFoldersStore, value: data.conversation_folders },
+    { key: 'message_nodes' as const, store: db.messageNodesStore, value: data.message_nodes },
+    { key: 'worldbooks' as const, store: db.worldbooksStore, value: data.worldbooks },
+    { key: 'global_states' as const, store: db.globalStatesStore, value: data.global_states },
+  ].filter((target) => target.value !== undefined);
+
+  const previous: Array<{ store: typeof db.modelsStore; value: unknown }> = [];
+  try {
+    for (const target of targets) {
+      previous.push({ store: target.store, value: await target.store.getItem('data') });
+      await target.store.setItem('data', target.value);
+    }
+  } catch (err) {
+    await Promise.allSettled(
+      previous.reverse().map((item) => item.store.setItem('data', item.value))
+    );
+    throw new Error(`导入写入失败，已尝试回滚：${err instanceof Error ? err.message : String(err)}`);
+  }
+}
 
 export default function SettingsPanel() {
   const { state, dispatch } = useApp();
@@ -269,6 +388,13 @@ export default function SettingsPanel() {
             onChange={(v) => dispatch({ type: 'SET_SCRIBE_ENABLED', enabled: v })}
           />
         </div>
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-slate-900 dark:text-slate-100">默认维护&lt;缓存世界书&gt;</span>
+          <Toggle
+            checked={state.scribeCacheWorldBookEnabled}
+            onChange={(v) => dispatch({ type: 'SET_SCRIBE_CACHE_WORLDBOOK_ENABLED', enabled: v })}
+          />
+        </div>
         {state.scribeEnabled && (
           <>
             {/* 引擎类型选择 */}
@@ -433,15 +559,16 @@ export default function SettingsPanel() {
         <div className="flex gap-2">
           <Button size="sm" variant="secondary" onClick={async () => {
             const stores = await import('../../db/stores');
-            const [models, chars, convs, nodes, wbs, states] = await Promise.all([
+            const [models, chars, convs, folders, nodes, wbs, states] = await Promise.all([
               stores.getAllModels(), stores.getAllCharacters(), stores.getAllConversations(),
+              stores.getAllConversationFolders(),
               import('../../db/index').then((db) => db.messageNodesStore.getItem('data') || []),
               stores.getAllWorldBooks(),
               import('../../db/index').then((db) => db.globalStatesStore.getItem('data') || []),
             ]);
             // 安全：导出时剔除所有模型的 apiKey，防止意外分享配置文件导致 API Key 泄露。
             const safeModels = (models as any[]).map(({ apiKey, ...rest }) => rest);
-            const blob = new Blob([JSON.stringify({ models: safeModels, characters: chars, conversations: convs, message_nodes: nodes, worldbooks: wbs, global_states: states }, null, 2)], { type: 'application/json' });
+            const blob = new Blob([JSON.stringify({ models: safeModels, characters: chars, conversations: convs, conversation_folders: folders, message_nodes: nodes, worldbooks: wbs, global_states: states }, null, 2)], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a'); a.href = url; a.download = 'tavern-backup.json'; a.click();
             URL.revokeObjectURL(url);
@@ -451,23 +578,16 @@ export default function SettingsPanel() {
             input.onchange = async (e) => {
               const file = (e.target as HTMLInputElement).files?.[0];
               if (!file) return;
-              const text = await readFileAsTextRobust(file);
               try {
+                const text = await readFileAsTextRobust(file);
                 const data = JSON.parse(text);
-                const db = await import('../../db/index');
-                // 安全：导入时清空所有 apiKey，避免从他人分享的配置中继承密钥。
-                // 用户导入后需手动填写各模型的 apiKey。
-                if (data.models) {
-                  data.models = (data.models as any[]).map((m: any) => ({ ...m, apiKey: '' }));
-                  await db.modelsStore.setItem('data', data.models);
-                }
-                if (data.characters) await db.charactersStore.setItem('data', data.characters);
-                if (data.conversations) await db.conversationsStore.setItem('data', data.conversations);
-                if (data.message_nodes) await db.messageNodesStore.setItem('data', data.message_nodes);
-                if (data.worldbooks) await db.worldbooksStore.setItem('data', data.worldbooks);
-                if (data.global_states) await db.globalStatesStore.setItem('data', data.global_states);
+                // 安全：导入前先做表级结构校验；写入失败时回滚已写入的 store。
+                // 另：导入时清空所有 apiKey，避免从他人分享的配置中继承密钥。
+                await importBackupData(data);
                 alert('数据导入成功，请刷新页面。');
-              } catch { alert('导入失败：无效的 JSON 文件'); }
+              } catch (err) {
+                alert(`导入失败：${err instanceof Error ? err.message : '无效的 JSON 文件'}`);
+              }
             };
             input.click();
           }}>导入数据</Button>
@@ -512,6 +632,7 @@ export default function SettingsPanel() {
               { key: 'tplImplantMemoryPrefix', label: '植入记忆结晶前缀', desc: '一次性植入记忆功能中记忆结晶的前缀。占位符：{content}', defaultVal: DEFAULT_TPL_IMPLANT_MEMORY_PREFIX, rows: 2 },
               { key: 'tplImplantScribePrefix', label: '植入状态书前缀', desc: '一次性植入记忆功能中状态书的前缀。占位符：{content}', defaultVal: DEFAULT_TPL_IMPLANT_SCRIBE_PREFIX, rows: 2 },
               { key: 'tplDistilledNodePrefix', label: '蒸馏节点生成格式', desc: '蒸馏完成后生成的 distilled 消息节点格式。占位符：{total}, {summary}', defaultVal: DEFAULT_TPL_DISTILLED_NODE_PREFIX, rows: 2 },
+              { key: 'tplCacheWorldBookPrompt', label: '状态书AI操控<缓存世界书>提示词', desc: '状态书/Galgame 兼任维护<缓存世界书>时追加的功能提示词，要求 AI 在结尾输出 JSON 读写接口。占位符：{limit}, {manualKeys}, {cacheEntries}', defaultVal: DEFAULT_TPL_CACHE_WORLD_BOOK_PROMPT, rows: 12 },
               { key: 'tplReverseEngineer', label: '高级卡逆向提示词', desc: '角色卡逆向功能使用的提示词。将世界书逆向串联为主角色提示词。占位符：{worldBook}, {originalPrompt}', defaultVal: DEFAULT_TPL_REVERSE_ENGINEER, rows: 8 },
             ] as const).map((item) => (
               <div key={item.key} className="space-y-1">

@@ -24,7 +24,22 @@ function AppInner() {
   const { state, dispatch } = useApp();
   const { models, loadModels } = useModels();
   const { characters, loadCharacters } = useCharacters();
-  const { conversations, currentConversation, loadConversations, createConversation, deleteConversation, setCurrentConversation, addConversationDirect } = useConversations();
+  const {
+    conversations,
+    folders,
+    currentConversation,
+    loadConversations,
+    createConversation,
+    deleteConversation,
+    createConversationFolder,
+    renameConversationFolder,
+    setConversationFolderCollapsed,
+    addConversationsToFolder,
+    removeConversationFromFolder,
+    deleteConversationFolder,
+    setCurrentConversation,
+    addConversationDirect,
+  } = useConversations();
   const { loadNodes, cloneToNewConversation } = useMessageNodes();
   const [showSettings, setShowSettings] = useState(false);
 
@@ -85,10 +100,17 @@ function AppInner() {
         return (
           <ConversationList
             conversations={conversations}
+            folders={folders}
             characters={characters}
             currentConversation={currentConversation}
             onCreateConversation={createConversation}
             onDeleteConversation={deleteConversation}
+            onCreateFolder={createConversationFolder}
+            onRenameFolder={renameConversationFolder}
+            onSetFolderCollapsed={setConversationFolderCollapsed}
+            onAddConversationsToFolder={addConversationsToFolder}
+            onRemoveConversationFromFolder={removeConversationFromFolder}
+            onDeleteFolder={deleteConversationFolder}
             onSelectConversation={(id) => {
               setCurrentConversation(id);
               dispatch({ type: 'SET_CONVERSATION', id });
@@ -104,10 +126,17 @@ function AppInner() {
         return (
           <ConversationList
             conversations={conversations}
+            folders={folders}
             characters={characters}
             currentConversation={currentConversation}
             onCreateConversation={createConversation}
             onDeleteConversation={deleteConversation}
+            onCreateFolder={createConversationFolder}
+            onRenameFolder={renameConversationFolder}
+            onSetFolderCollapsed={setConversationFolderCollapsed}
+            onAddConversationsToFolder={addConversationsToFolder}
+            onRemoveConversationFromFolder={removeConversationFromFolder}
+            onDeleteFolder={deleteConversationFolder}
             onSelectConversation={(id) => {
               setCurrentConversation(id);
               dispatch({ type: 'SET_CURRENT_CONVERSATION', id });

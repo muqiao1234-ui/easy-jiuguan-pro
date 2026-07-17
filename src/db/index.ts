@@ -19,6 +19,12 @@ export const conversationsStore = localforage.createInstance({
   storeName: DB_KEYS.conversations,
 });
 
+/** 会话文件夹 store */
+export const conversationFoldersStore = localforage.createInstance({
+  name: 'tavern_ai_sandbox',
+  storeName: DB_KEYS.conversationFolders,
+});
+
 /** 消息节点 store */
 export const messageNodesStore = localforage.createInstance({
   name: 'tavern_ai_sandbox',
@@ -48,6 +54,7 @@ export const allStores = [
   modelsStore,
   charactersStore,
   conversationsStore,
+  conversationFoldersStore,
   messageNodesStore,
   worldbooksStore,
   globalStatesStore,

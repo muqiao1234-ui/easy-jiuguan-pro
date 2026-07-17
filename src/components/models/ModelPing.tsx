@@ -1,46 +1,86 @@
-import React from 'react';
-import { useModels } from '../../hooks/useModels';
-import Button from '../ui/Button';
+import React, { useState } from 'react';
 import Icon from '../ui/Icon';
 
-export default function ModelPing() {
-  const { models, pinging, pingModel } = useModels();
+const COMMON_ERRORS = [
+  {
+    code: '400',
+    title: '请求格式错误',
+    desc: '通常是模型名写错、Base URL 路径不兼容、采样参数不被该模型支持，或服务商要求的字段格式和 OpenAI 兼容格式不同。',
+  },
+  {
+    code: '401 / 403',
+    title: '鉴权失败',
+    desc: 'API Key 为空、复制时多了空格、Key 已失效，或账号没有调用该模型/接口的权限。',
+  },
+  {
+    code: '404',
+    title: '接口或模型不存在',
+    desc: '常见于 Base URL 填到了网页地址而不是 API 地址，或模型名称没有和服务商后台完全一致。',
+  },
+  {
+    code: '429',
+    title: '频率或额度限制',
+    desc: '请求太快、账号额度不足、并发过高，或服务商正在限流。可开启低速率模式、等待额度恢复，或更换通道。',
+  },
+  {
+    code: '5xx',
+    title: '服务端异常',
+    desc: '通常是服务商繁忙、网关错误、模型维护或本地部署器崩溃。先等待，再检查服务状态和本地日志。',
+  },
+  {
+    code: '超时',
+    title: '网络或模型响应过慢',
+    desc: '可能是网络不通、代理异常、本地模型冷启动、上下文太长，或服务商响应时间超过测试阈值。',
+  },
+];
 
-  const latencyLabel = (lat: number): { text: string; color: string } => {
-    if (lat === -1) return { text: '未测试', color: 'text-slate-500' };
-    if (lat === -2) return { text: '超时', color: 'text-red-400' };
-    if (lat === -3) return { text: 'Error/CORS', color: 'text-red-400' };
-    // HTTP 错误码：编码为 -400 - status，例如 401 → -401，500 → -500
-    if (lat <= -400) {
-      const status = -400 - lat;
-      // 401/403 → 鉴权失败；404 → 路径错误；5xx → 服务端异常；其他 → HTTP 错误
-      let label = `HTTP ${status}`;
-      if (status === 401 || status === 403) label = `HTTP ${status} 鉴权失败`;
-      else if (status === 404) label = `HTTP 404 路径错误`;
-      else if (status >= 500) label = `HTTP ${status} 服务端异常`;
-      return { text: label, color: 'text-red-400' };
-    }
-    return { text: `${lat} ms`, color: lat < 500 ? 'text-green-400' : lat < 1500 ? 'text-amber-400' : 'text-red-400' };
-  };
+export default function ModelPing() {
+  const [open, setOpen] = useState(false);
 
   return (
-    <div className="space-y-1.5">
-      <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">延迟测试</h4>
-      {models.map((m) => {
-        const lat = latencyLabel(m.latency);
-        return (
-          <div key={m.id} className="flex items-center justify-between py-1">
-            <span className="text-xs text-slate-300 truncate flex-1 mr-2">{m.name}</span>
-            <div className="flex items-center gap-1.5">
-              <span className={`text-xs font-mono ${lat.color}`}>{lat.text}</span>
-              <Button size="sm" variant="ghost" onClick={() => pingModel(m.id)} loading={pinging[m.id]} title="Ping">
-                <Icon name="ping" size={12} />
-              </Button>
-            </div>
+    <div className="rounded-lg border border-slate-700/50 bg-slate-800/50 p-3">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between gap-2 text-left"
+      >
+        <div className="min-w-0">
+          <h4 className="text-xs font-semibold uppercase tracking-wider text-cyan-400">常见模型连接问题</h4>
+          {!open && (
+            <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
+              400、401、429、CORS、超时等问题速查。Ping 测试按钮在每个模型通道卡片里。
+            </p>
+          )}
+        </div>
+        <Icon name="chevron" size={14} className={`text-slate-400 transition-transform ${open ? '' : '-rotate-90'}`} />
+      </button>
+
+      {open && (
+        <div className="mt-3 space-y-3 text-[11px] leading-relaxed text-slate-300">
+          <div className="grid gap-2 md:grid-cols-2">
+            {COMMON_ERRORS.map((item) => (
+              <div key={item.code} className="rounded-md border border-slate-700/50 bg-slate-900/50 p-2">
+                <div className="mb-1 flex items-center gap-2">
+                  <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-amber-300">{item.code}</span>
+                  <span className="font-medium text-slate-100">{item.title}</span>
+                </div>
+                <p className="text-slate-400">{item.desc}</p>
+              </div>
+            ))}
           </div>
-        );
-      })}
-      {models.length === 0 && <div className="text-xs text-slate-500">暂无模型</div>}
+
+          <div className="rounded-md border border-cyan-700/40 bg-cyan-950/20 p-3">
+            <h5 className="mb-1 text-xs font-semibold text-cyan-300">CORS / 跨域问题</h5>
+            <p className="text-slate-300">
+              本地版 Easy酒馆Pro 是浏览器直接打开的本地文件。如果 API 服务商不支持跨域，或者本地部署 AI 没有开启跨域，浏览器会拦截请求，界面可能显示 Error/CORS。
+            </p>
+            <ol className="mt-2 list-decimal space-y-1 pl-4 text-slate-400">
+              <li>打开服务商的跨域支持，或打开本地模型部署器的跨域支持。</li>
+              <li>使用代码等方法，把本地文件部署到本地 HTTP 静态网页后访问。</li>
+              <li>使用作者部署在 GitHub Pages 的静态网站，收藏或添加到桌面即可。</li>
+            </ol>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -13,6 +13,7 @@ export interface ScribeConfig {
   scribeTriggerInterval: number;
   scribeSystemPrompt: string;
   scribeModelId: string | null;
+  scribeCacheWorldBookEnabled: boolean;
 }
 
 const DEFAULT_CONFIG: ScribeConfig = {
@@ -22,6 +23,7 @@ const DEFAULT_CONFIG: ScribeConfig = {
   scribeTriggerInterval: DEFAULT_SCRIBE_TRIGGER_INTERVAL,
   scribeSystemPrompt: SCRIBE_SYSTEM_PROMPT,
   scribeModelId: null,
+  scribeCacheWorldBookEnabled: false,
 };
 
 export function useGlobalStates() {
@@ -40,6 +42,7 @@ export function useGlobalStates() {
         scribeTriggerInterval: state?.scribeTriggerInterval ?? DEFAULT_CONFIG.scribeTriggerInterval,
         scribeSystemPrompt: state?.scribeSystemPrompt ?? DEFAULT_CONFIG.scribeSystemPrompt,
         scribeModelId: state?.scribeModelId ?? DEFAULT_CONFIG.scribeModelId,
+        scribeCacheWorldBookEnabled: state?.scribeCacheWorldBookEnabled ?? DEFAULT_CONFIG.scribeCacheWorldBookEnabled,
       });
     } catch (e) {
       console.error('loadScribeContent failed:', e);

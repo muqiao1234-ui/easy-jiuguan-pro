@@ -64,7 +64,10 @@ export interface Character {
   /** 头像：emoji 字符 或 data:image/...;base64,... 格式 */
   avatar: string;
   systemPrompt: string;
+  /** 主世界书：手动维护、常驻设定 */
   worldBookId?: string;
+  /** 缓存世界书：由状态书 AI 辅助维护，最多 10 条 */
+  cacheWorldBookId?: string;
 }
 
 /** 会话 */
@@ -73,6 +76,15 @@ export interface Conversation {
   title: string;
   characterAId: string;
   characterBId: string;
+}
+
+/** 会话文件夹：只收纳会话 ID，删除文件夹不会删除会话本体 */
+export interface ConversationFolder {
+  id: string;
+  name: string;
+  conversationIds: string[];
+  isCollapsed: boolean;
+  createdAt: number;
 }
 
 /** 消息节点（扁平列表，每个对话一条时间线） */
@@ -120,6 +132,9 @@ export interface WorldBook {
   id: string;
   name: string;
   entries: WorldBookEntry[];
+  /** cache = 状态书 AI 辅助维护的缓存世界书 */
+  kind?: 'manual' | 'cache';
+  entryLimit?: number;
 }
 
 /** 全局状态记录（每个对话独立一份） */
@@ -132,6 +147,8 @@ export interface GlobalState {
   scribeTriggerInterval?: number;
   scribeSystemPrompt?: string;
   scribeModelId?: string | null;
+  /** 状态书 AI 是否同时维护绑定角色的缓存世界书 */
+  scribeCacheWorldBookEnabled?: boolean;
   /** 状态书插入策略模式 */
   scribeMode?: ScribeMode;
   scribeEngine?: ScribeEngine;
@@ -260,6 +277,8 @@ export interface AppState {
   boldColorize: boolean;
   /** 状态书是否启用 */
   scribeEnabled: boolean;
+  /** 状态书 AI 是否同时维护绑定角色的缓存世界书 */
+  scribeCacheWorldBookEnabled: boolean;
   /** 状态书注入间隔（每 N 轮注入一次），默认 1=每轮 */
   scribeInterval: number;
   /** 状态书 AI 自动总结触发间隔（每 N 轮触发一次），默认 5 */
@@ -296,6 +315,7 @@ export interface AppState {
   tplImplantMemoryPrefix: string;
   tplImplantScribePrefix: string;
   tplDistilledNodePrefix: string;
+  tplCacheWorldBookPrompt: string;
   tplReverseEngineer: string;
 }
 
@@ -313,6 +333,7 @@ export type AppAction =
   | { type: 'SET_WALLPAPER'; config: Partial<WallpaperConfig> }
   | { type: 'SET_BOLD_COLORIZE'; enabled: boolean }
   | { type: 'SET_SCRIBE_ENABLED'; enabled: boolean }
+  | { type: 'SET_SCRIBE_CACHE_WORLDBOOK_ENABLED'; enabled: boolean }
   | { type: 'SET_SCRIBE_INTERVAL'; interval: number }
   | { type: 'SET_SCRIBE_TRIGGER_INTERVAL'; interval: number }
   | { type: 'SET_SCRIBE_ROUNDS'; rounds: number }

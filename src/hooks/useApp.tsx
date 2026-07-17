@@ -20,6 +20,7 @@ const initialState: AppState = {
   },
   boldColorize: true,
   scribeEnabled: true,
+  scribeCacheWorldBookEnabled: false,
   scribeInterval: 1,
   scribeTriggerInterval: DEFAULT_SCRIBE_TRIGGER_INTERVAL,
   scribeRounds: DEFAULT_SCRIBE_ROUNDS,
@@ -44,6 +45,7 @@ const initialState: AppState = {
   tplImplantMemoryPrefix: '',
   tplImplantScribePrefix: '',
   tplDistilledNodePrefix: '',
+  tplCacheWorldBookPrompt: '',
   tplReverseEngineer: '',
 };
 
@@ -90,6 +92,8 @@ function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, boldColorize: action.enabled };
     case 'SET_SCRIBE_ENABLED':
       return { ...state, scribeEnabled: action.enabled };
+    case 'SET_SCRIBE_CACHE_WORLDBOOK_ENABLED':
+      return { ...state, scribeCacheWorldBookEnabled: action.enabled };
     case 'SET_SCRIBE_INTERVAL':
       return { ...state, scribeInterval: action.interval };
     case 'SET_SCRIBE_TRIGGER_INTERVAL':
@@ -174,7 +178,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           'tplWorldBookPrefix', 'tplDistilledPrefix', 'tplStateBookPrefix',
           'tplEavesdropAppend', 'tplGalgameCharInjection',
           'tplImplantMemoryPrefix', 'tplImplantScribePrefix', 'tplDistilledNodePrefix',
-          'tplReverseEngineer',
+          'tplCacheWorldBookPrompt', 'tplReverseEngineer',
         ];
         for (const k of advKeys) {
           if ((settings as any)[k] !== undefined) dispatch({ type: 'SET_ADV_TPL', key: k, value: (settings as any)[k] });
@@ -192,6 +196,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
         if (settings.scribeEnabled !== undefined) {
           dispatch({ type: 'SET_SCRIBE_ENABLED', enabled: settings.scribeEnabled });
+        }
+        if (settings.scribeCacheWorldBookEnabled !== undefined) {
+          dispatch({ type: 'SET_SCRIBE_CACHE_WORLDBOOK_ENABLED', enabled: settings.scribeCacheWorldBookEnabled });
         }
         if (settings.scribeRounds !== undefined) {
           dispatch({ type: 'SET_SCRIBE_ROUNDS', rounds: settings.scribeRounds });
@@ -234,18 +241,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       tplImplantMemoryPrefix: state.tplImplantMemoryPrefix,
       tplImplantScribePrefix: state.tplImplantScribePrefix,
       tplDistilledNodePrefix: state.tplDistilledNodePrefix,
+      tplCacheWorldBookPrompt: state.tplCacheWorldBookPrompt,
       tplReverseEngineer: state.tplReverseEngineer,
       thinkingEnabled: state.thinkingEnabled,
       debugMode: state.debugMode,
       scribeEnabled: state.scribeEnabled,
+      scribeCacheWorldBookEnabled: state.scribeCacheWorldBookEnabled,
       scribeRounds: state.scribeRounds,
       lowRateMode: state.lowRateMode,
     });
   }, [state.theme, state.wallpaper, state.boldColorize, state.scribeEngine, state.scribeMode, state.galgamePrompt, state.mutualObservePrompt,
     state.tplUserWrapper, state.tplOtherCharWrapper, state.tplIdentityAnchor, state.tplWorldBookPrefix,
     state.tplDistilledPrefix, state.tplStateBookPrefix, state.tplEavesdropAppend, state.tplGalgameCharInjection,
-    state.tplImplantMemoryPrefix, state.tplImplantScribePrefix, state.tplDistilledNodePrefix, state.tplReverseEngineer,
-    state.thinkingEnabled, state.debugMode, state.scribeEnabled, state.scribeRounds, state.lowRateMode]);
+    state.tplImplantMemoryPrefix, state.tplImplantScribePrefix, state.tplDistilledNodePrefix,
+    state.tplCacheWorldBookPrompt, state.tplReverseEngineer,
+    state.thinkingEnabled, state.debugMode, state.scribeEnabled, state.scribeCacheWorldBookEnabled, state.scribeRounds, state.lowRateMode]);
 
   // 低速率模式变化时同步到 apiFetch 模块
   useEffect(() => {

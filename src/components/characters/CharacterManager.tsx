@@ -5,6 +5,7 @@ import { useApp } from '../../hooks/useApp';
 import { AVATAR_MAX_WIDTH, AVATAR_QUALITY, DEFAULT_TPL_REVERSE_ENGINEER, buildSamplingParams } from '../../utils/constants';
 import { importSillyTavernCard, exportToSillyTavernJson } from '../../utils/sillyTavernCard';
 import { apiFetch } from '../../utils/apiFetch';
+import { CACHE_WORLD_BOOK_LIMIT } from '../../utils/cacheWorldBook';
 import * as Stores from '../../db/stores';
 import Button from '../ui/Button';
 import Modal from '../ui/Modal';
@@ -92,7 +93,7 @@ export default function CharacterManager() {
   const { state } = useApp();
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: '', systemPrompt: '', avatar: '🤖', worldBookId: '' });
+  const [form, setForm] = useState({ name: '', systemPrompt: '', avatar: '🤖', worldBookId: '', cacheWorldBookId: '' });
   const [uploading, setUploading] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -104,22 +105,39 @@ export default function CharacterManager() {
 
   useEffect(() => { loadCharacters(); loadWorldBooks(); }, [loadCharacters, loadWorldBooks]);
 
-  const openAdd = () => { setEditingId(null); setForm({ name: '', systemPrompt: '', avatar: '🤖', worldBookId: '' }); setReverseError(''); setShowModal(true); };
+  const openAdd = () => { setEditingId(null); setForm({ name: '', systemPrompt: '', avatar: '🤖', worldBookId: '', cacheWorldBookId: '' }); setReverseError(''); setShowModal(true); };
   const openEdit = (id: string) => {
     const c = characters.find((x) => x.id === id);
     if (!c) return;
     setEditingId(id);
-    setForm({ name: c.name, systemPrompt: c.systemPrompt, avatar: c.avatar, worldBookId: c.worldBookId || '' });
+    setForm({
+      name: c.name,
+      systemPrompt: c.systemPrompt,
+      avatar: c.avatar,
+      worldBookId: c.worldBookId || '',
+      cacheWorldBookId: c.cacheWorldBookId || '',
+    });
     setReverseError('');
     setShowModal(true);
   };
 
   const handleSave = async () => {
     if (!form.name || !form.systemPrompt) return;
+    const updates = {
+      ...form,
+      worldBookId: form.worldBookId || undefined,
+      cacheWorldBookId: form.cacheWorldBookId || undefined,
+    };
     if (editingId) {
-      await updateCharacter(editingId, { ...form, worldBookId: form.worldBookId || undefined });
+      await updateCharacter(editingId, updates);
     } else {
-      await addCharacter(form.name, form.systemPrompt, form.avatar, form.worldBookId || undefined);
+      await addCharacter(
+        form.name,
+        form.systemPrompt,
+        form.avatar,
+        form.worldBookId || undefined,
+        form.cacheWorldBookId || undefined
+      );
     }
     setShowModal(false);
   };
@@ -313,7 +331,12 @@ export default function CharacterManager() {
     }
   };
 
-  const wbOptions = [{ value: '', label: '无世界书' }, ...worldbooks.map((w) => ({ value: w.id, label: w.name }))];
+  const isCacheWorldBook = (wb: { kind?: string; entryLimit?: number; name: string }) =>
+    wb.kind === 'cache' || wb.entryLimit === CACHE_WORLD_BOOK_LIMIT || wb.name.includes('缓存世界书');
+  const manualWorldBooks = worldbooks.filter((w) => !isCacheWorldBook(w));
+  const cacheWorldBooks = worldbooks.filter(isCacheWorldBook);
+  const wbOptions = [{ value: '', label: '无世界书' }, ...manualWorldBooks.map((w) => ({ value: w.id, label: w.name }))];
+  const cacheWbOptions = [{ value: '', label: '无缓存世界书' }, ...cacheWorldBooks.map((w) => ({ value: w.id, label: `${w.name} (${w.entries.length}/${CACHE_WORLD_BOOK_LIMIT})` }))];
 
   return (
     <div className="space-y-2">
@@ -375,6 +398,20 @@ export default function CharacterManager() {
             </div>
           </div>
           <div className="text-xs text-slate-500 mt-1 line-clamp-2">{c.systemPrompt}</div>
+          {(c.worldBookId || c.cacheWorldBookId) && (
+            <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
+              {c.worldBookId && (
+                <span className="px-1.5 py-0.5 rounded bg-amber-600/15 text-amber-400">
+                  A世界书: {worldbooks.find((w) => w.id === c.worldBookId)?.name || '已失效'}
+                </span>
+              )}
+              {c.cacheWorldBookId && (
+                <span className="px-1.5 py-0.5 rounded bg-cyan-600/15 text-cyan-300">
+                  缓存世界书: {worldbooks.find((w) => w.id === c.cacheWorldBookId)?.name || '已失效'}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       ))}
 
@@ -439,8 +476,18 @@ export default function CharacterManager() {
           </div>
 
           <div>
-            <label className="block text-xs text-slate-400 mb-1">绑定世界书</label>
+            <label className="block text-xs text-slate-400 mb-1">绑定 A 世界书（手动世界书）</label>
             <Dropdown options={wbOptions} value={form.worldBookId} onChange={(v) => setForm({ ...form, worldBookId: v })} placeholder="无世界书" />
+          </div>
+
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">绑定 &lt;缓存世界书&gt;（非必选，最多 {CACHE_WORLD_BOOK_LIMIT} 条）</label>
+            <Dropdown
+              options={cacheWbOptions}
+              value={form.cacheWorldBookId}
+              onChange={(v) => setForm({ ...form, cacheWorldBookId: v })}
+              placeholder="无缓存世界书"
+            />
           </div>
 
           {/* 高级卡逆向 — 仅编辑模式 + 已绑定世界书时显示 */}

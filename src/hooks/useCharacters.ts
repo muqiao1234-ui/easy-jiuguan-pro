@@ -20,13 +20,20 @@ export function useCharacters() {
   }, []);
 
   const addCharacter = useCallback(
-    async (name: string, systemPrompt: string, avatar: string = '🤖', worldBookId?: string) => {
+    async (
+      name: string,
+      systemPrompt: string,
+      avatar: string = '🤖',
+      worldBookId?: string,
+      cacheWorldBookId?: string
+    ) => {
       const char: Character = {
         id: generateId(),
         name,
         avatar,
         systemPrompt,
         worldBookId,
+        cacheWorldBookId,
       };
       await Stores.addCharacter(char);
       setCharacters((prev) => [...prev, char]);

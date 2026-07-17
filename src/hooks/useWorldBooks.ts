@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import type { WorldBook, WorldBookEntry } from '../types';
 import * as Stores from '../db/stores';
 import { generateId } from '../utils/id';
+import { CACHE_WORLD_BOOK_LIMIT, createCacheWorldBook, normalizeCacheWorldBook } from '../utils/cacheWorldBook';
 
 export function useWorldBooks() {
   const [worldbooks, setWorldBooks] = useState<WorldBook[]>([]);
@@ -11,7 +12,7 @@ export function useWorldBooks() {
     try {
       setLoading(true);
       const data = await Stores.getAllWorldBooks();
-      setWorldBooks(data);
+      setWorldBooks(data.map(normalizeCacheWorldBook));
     } catch (e) {
       console.error('loadWorldBooks failed:', e);
     } finally {
@@ -26,12 +27,24 @@ export function useWorldBooks() {
     return wb;
   }, []);
 
-  const updateWorldBook = useCallback(async (id: string, updates: Partial<WorldBook>) => {
-    await Stores.updateWorldBook(id, updates);
-    setWorldBooks((prev) =>
-      prev.map((w) => (w.id === id ? { ...w, ...updates } : w))
-    );
+  const addCacheWorldBook = useCallback(async (name: string) => {
+    const wb = createCacheWorldBook(name);
+    await Stores.addWorldBook(wb);
+    setWorldBooks((prev) => [...prev, wb]);
+    return wb;
   }, []);
+
+  const updateWorldBook = useCallback(async (id: string, updates: Partial<WorldBook>) => {
+    const current = worldbooks.find((w) => w.id === id);
+    const isCache = current?.kind === 'cache' || updates.kind === 'cache' || current?.entryLimit === CACHE_WORLD_BOOK_LIMIT;
+    const safeUpdates = isCache && updates.entries
+      ? { ...updates, kind: 'cache' as const, entryLimit: CACHE_WORLD_BOOK_LIMIT, entries: updates.entries.slice(0, CACHE_WORLD_BOOK_LIMIT) }
+      : updates;
+    await Stores.updateWorldBook(id, safeUpdates);
+    setWorldBooks((prev) =>
+      prev.map((w) => (w.id === id ? normalizeCacheWorldBook({ ...w, ...safeUpdates }) : w))
+    );
+  }, [worldbooks]);
 
   const deleteWorldBook = useCallback(async (id: string) => {
     await Stores.deleteWorldBook(id);
@@ -42,9 +55,16 @@ export function useWorldBooks() {
     async (wbId: string, keys: string[], value: string, priority: number) => {
       const wb = worldbooks.find((w) => w.id === wbId);
       if (!wb) return;
+      const isCache = wb.kind === 'cache' || wb.entryLimit === CACHE_WORLD_BOOK_LIMIT;
+      if (isCache && wb.entries.length >= CACHE_WORLD_BOOK_LIMIT) return;
       const entry: WorldBookEntry = { id: generateId(), keys, value, priority };
-      const updatedEntries = [...wb.entries, entry];
-      await Stores.updateWorldBook(wbId, { entries: updatedEntries });
+      const updatedEntries = isCache
+        ? [...wb.entries, entry].slice(0, CACHE_WORLD_BOOK_LIMIT)
+        : [...wb.entries, entry];
+      await Stores.updateWorldBook(wbId, {
+        entries: updatedEntries,
+        ...(isCache ? { kind: 'cache' as const, entryLimit: CACHE_WORLD_BOOK_LIMIT } : {}),
+      });
       setWorldBooks((prev) =>
         prev.map((w) => (w.id === wbId ? { ...w, entries: updatedEntries } : w))
       );
@@ -75,18 +95,24 @@ export function useWorldBooks() {
     ) => {
       const wb = worldbooks.find((w) => w.id === wbId);
       if (!wb) return 0;
+      const isCache = wb.kind === 'cache' || wb.entryLimit === CACHE_WORLD_BOOK_LIMIT;
       const entries: WorldBookEntry[] = newEntries.map((e) => ({
         id: generateId(),
         keys: e.keys,
         value: e.value,
         priority: e.priority,
       }));
-      const updatedEntries = [...wb.entries, ...entries];
-      await Stores.updateWorldBook(wbId, { entries: updatedEntries });
+      const availableSlots = isCache ? Math.max(0, CACHE_WORLD_BOOK_LIMIT - wb.entries.length) : entries.length;
+      const entriesToAdd = isCache ? entries.slice(0, availableSlots) : entries;
+      const updatedEntries = [...wb.entries, ...entriesToAdd];
+      await Stores.updateWorldBook(wbId, {
+        entries: updatedEntries,
+        ...(isCache ? { kind: 'cache' as const, entryLimit: CACHE_WORLD_BOOK_LIMIT } : {}),
+      });
       setWorldBooks((prev) =>
         prev.map((w) => (w.id === wbId ? { ...w, entries: updatedEntries } : w))
       );
-      return entries.length;
+      return entriesToAdd.length;
     },
     [worldbooks]
   );
@@ -109,6 +135,7 @@ export function useWorldBooks() {
     loading,
     loadWorldBooks,
     addWorldBook,
+    addCacheWorldBook,
     updateWorldBook,
     deleteWorldBook,
     addEntry,

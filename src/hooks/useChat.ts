@@ -10,6 +10,7 @@ import type {
   MessageRole,
   ScribeMode,
   ScribeEngine,
+  WorldBook,
 } from '../types';
 import { SSEParser } from '../utils/sse';
 import { assembleContext, calcWorldBookCooldown } from '../utils/context';
@@ -23,6 +24,14 @@ import {
   collectRecentGalgameStates,
   parseGalgameResponse,
 } from '../utils/galgameEngine';
+import {
+  CACHE_WORLD_BOOK_LIMIT,
+  buildCacheWorldBookPrompt,
+  extractCacheWorldBookPatch,
+  mergeCacheWorldBookEntries,
+  normalizeCacheWorldBook,
+} from '../utils/cacheWorldBook';
+import * as Stores from '../db/stores';
 
 /** SSE 流式读取空闲超时：若服务端在 30s 内未发送任何新 chunk，视为已僵死并自动断开 */
 import { apiFetch } from '../utils/apiFetch';
@@ -36,6 +45,7 @@ export interface UseChatDeps {
   distillModelId: string | null;
   scribeModelId: string | null;
   scribeEnabled: boolean;
+  scribeCacheWorldBookEnabled: boolean;
   scribeTriggerInterval: number;
   scribeRounds: number;
   scribeMode: ScribeMode;
@@ -77,6 +87,7 @@ export interface UseChatDeps {
   tplImplantMemoryPrefix?: string;
   tplImplantScribePrefix?: string;
   tplDistilledNodePrefix?: string;
+  tplCacheWorldBookPrompt?: string;
 }
 
 export function useChat(deps: UseChatDeps) {
@@ -94,13 +105,75 @@ export function useChat(deps: UseChatDeps) {
   /** 当前对话轮数计数器 */
   const roundCounterRef = useRef<number>(0);
 
+  const scanBoundWorldBooks = useCallback(
+    async (character: Character, recentMessages: MessageNode[], maxEntries: number): Promise<WorldBookEntry[]> => {
+      const [manualEntries, cacheEntries] = await Promise.all([
+        deps.scanWorldBook(character.worldBookId, recentMessages, maxEntries),
+        deps.scanWorldBook(character.cacheWorldBookId, recentMessages, maxEntries),
+      ]);
+      const seen = new Set<string>();
+      return [...manualEntries, ...cacheEntries]
+        .filter((entry) => {
+          if (seen.has(entry.id)) return false;
+          seen.add(entry.id);
+          return true;
+        })
+        .sort((a, b) => b.priority - a.priority)
+        .slice(0, maxEntries);
+    },
+    [deps]
+  );
+
+  const loadCacheWorldBookContext = useCallback(
+    async (character?: Character | null): Promise<{ cacheBook: WorldBook; manualBook: WorldBook | null } | null> => {
+      if (!deps.scribeCacheWorldBookEnabled || !character?.cacheWorldBookId) return null;
+      const cacheBookRaw = await Stores.getWorldBookById(character.cacheWorldBookId);
+      if (!cacheBookRaw) return null;
+
+      const cacheBook = normalizeCacheWorldBook(cacheBookRaw);
+      if (
+        cacheBook.kind !== cacheBookRaw.kind ||
+        cacheBook.entryLimit !== cacheBookRaw.entryLimit ||
+        cacheBook.entries.length !== cacheBookRaw.entries.length
+      ) {
+        await Stores.updateWorldBook(cacheBook.id, {
+          kind: 'cache',
+          entryLimit: CACHE_WORLD_BOOK_LIMIT,
+          entries: cacheBook.entries,
+        });
+      }
+
+      const manualBook = character.worldBookId
+        ? (await Stores.getWorldBookById(character.worldBookId)) || null
+        : null;
+      return { cacheBook, manualBook };
+    },
+    [deps.scribeCacheWorldBookEnabled]
+  );
+
+  const applyCacheWorldBookPatch = useCallback(
+    async (cacheBookId: string, operations: unknown[] | undefined) => {
+      if (!operations || operations.length === 0) return;
+      const latestBook = await Stores.getWorldBookById(cacheBookId);
+      if (!latestBook) return;
+      const normalized = normalizeCacheWorldBook(latestBook);
+      const nextEntries = mergeCacheWorldBookEntries(normalized.entries, operations as any);
+      await Stores.updateWorldBook(cacheBookId, {
+        kind: 'cache',
+        entryLimit: CACHE_WORLD_BOOK_LIMIT,
+        entries: nextEntries,
+      });
+    },
+    []
+  );
+
   /**
    * 第三书记员 AI 总结 — 属性化重构后
    * 生成状态书内容后，绑定到指定的 assistant 消息节点的 scribeUpdate 属性
    * 不再创建独立的 scribe 消息节点
    */
   const triggerScribeSummary = useCallback(
-    async (recentNodes: MessageNode[], targetAssistantNodeId: string, mode: ScribeMode) => {
+    async (recentNodes: MessageNode[], targetAssistantNodeId: string, mode: ScribeMode, character?: Character | null) => {
       if (!deps.conversationId || !deps.scribeModelId) return;
       if (!deps.scribeEnabled) return;
       if (recentNodes.length === 0) return;
@@ -117,6 +190,10 @@ export function useChat(deps: UseChatDeps) {
         if (dialogueNodes.length === 0) return;
 
         const scribePrompt = deps.scribeSystemPrompt || SCRIBE_SYSTEM_PROMPT;
+        const cacheContext = await loadCacheWorldBookContext(character);
+        const cachePrompt = cacheContext
+          ? buildCacheWorldBookPrompt(cacheContext.cacheBook, cacheContext.manualBook, deps.tplCacheWorldBookPrompt)
+          : '';
         const rounds = Math.max(2, deps.scribeRounds || 4); // 最低 2 轮，默认 4
 
         // 获取历史状态书（取最近 scribeUpdate 有值的节点，最少 1 个，用于格式继承）
@@ -127,6 +204,9 @@ export function useChat(deps: UseChatDeps) {
         // 构建 messages: system 开头 → 历史状态书 → 逐轮对话 user → system 结尾
         const messages: Array<{ role: 'system' | 'user'; content: string }> = [];
         messages.push({ role: 'system', content: scribePrompt });
+        if (cachePrompt) {
+          messages.push({ role: 'system', content: cachePrompt });
+        }
 
         // 注入历史状态书（格式继承）
         for (const s of previousScribes) {
@@ -149,7 +229,7 @@ export function useChat(deps: UseChatDeps) {
         }
 
         // 结尾重复 system prompt，提升执行力
-        messages.push({ role: 'system', content: scribePrompt });
+        messages.push({ role: 'system', content: cachePrompt ? `${scribePrompt}\n\n${cachePrompt}` : scribePrompt });
 
         const resp = await apiFetch(model.baseUrl, {
           method: 'POST',
@@ -168,8 +248,14 @@ export function useChat(deps: UseChatDeps) {
         if (!resp.ok) throw new Error(`状态书 API 错误: ${resp.status}`);
 
         const data = await resp.json();
-        const newScribeContent = data.choices?.[0]?.message?.content || '';
+        const rawScribeContent = data.choices?.[0]?.message?.content || '';
         const scribeTokenCost = data.usage?.total_tokens || undefined;
+        const { displayText, patch } = extractCacheWorldBookPatch(rawScribeContent);
+        const newScribeContent = displayText || (!patch ? rawScribeContent : '');
+
+        if (cacheContext && patch?.operations?.length) {
+          await applyCacheWorldBookPatch(cacheContext.cacheBook.id, patch.operations);
+        }
 
         if (newScribeContent.trim()) {
           await deps.updateMessageNode(targetAssistantNodeId, {
@@ -190,7 +276,7 @@ export function useChat(deps: UseChatDeps) {
         setScribeStreaming(false);
       }
     },
-    [deps]
+    [deps, loadCacheWorldBookContext, applyCacheWorldBookPatch]
   );
 
   /**
@@ -241,9 +327,16 @@ export function useChat(deps: UseChatDeps) {
         }
 
         const prompt = buildGalgamePrompt(charName, deps.galgamePrompt);
+        const cacheContext = await loadCacheWorldBookContext(character);
+        const cachePrompt = cacheContext
+          ? buildCacheWorldBookPrompt(cacheContext.cacheBook, cacheContext.manualBook, deps.tplCacheWorldBookPrompt)
+          : '';
         const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
           { role: 'system', content: prompt },
         ];
+        if (cachePrompt) {
+          messages.push({ role: 'system', content: cachePrompt });
+        }
 
         // 角色 systemPrompt 作为"伪装 user 消息"注入，让 galgame 引擎知道角色性格底色
         if (character?.systemPrompt?.trim()) {
@@ -291,17 +384,22 @@ export function useChat(deps: UseChatDeps) {
         const reasoning = data.choices?.[0]?.message?.reasoning_content || '';
         const finishReason = data.choices?.[0]?.finish_reason || '';
         const rawContent = content || reasoning || data.choices?.[0]?.text || '';
+        const { displayText: galgameDisplayText, patch } = extractCacheWorldBookPatch(rawContent);
+        const parseSource = galgameDisplayText || rawContent;
+        if (cacheContext && patch?.operations?.length) {
+          await applyCacheWorldBookPatch(cacheContext.cacheBook.id, patch.operations);
+        }
         console.log('[Galgame] 完整响应: %s', JSON.stringify(data).slice(0, 500));
         console.log('[Galgame] finish_reason=%s, content.len=%d, reasoning.len=%d, rawContent.len=%d',
           finishReason, content.length, reasoning.length, rawContent.length);
         console.log('[Galgame] 原始返回: %s', rawContent.slice(0, 300));
-        let galgameData = parseGalgameResponse(rawContent, charName);
+        let galgameData = parseGalgameResponse(parseSource, charName);
 
         // 如果 content 为空且 reasoning_content 有值但解析失败，
         // 尝试从 reasoning_content 中提取最后一个 JSON 对象（模型可能在推理末尾输出了结果）
         if (!galgameData && !content && reasoning) {
           console.warn('[Galgame] content 为空，尝试从 reasoning_content 提取 JSON');
-          galgameData = parseGalgameResponse(reasoning, charName);
+          galgameData = parseGalgameResponse(extractCacheWorldBookPatch(reasoning).displayText || reasoning, charName);
         }
 
         if (galgameData) {
@@ -439,8 +537,8 @@ export function useChat(deps: UseChatDeps) {
         const recentForScan = unarchived.slice(-deps.recentRounds);
         const recentForContext = recentForScan;
 
-        const wbEntries = await deps.scanWorldBook(
-          character.worldBookId,
+        const wbEntries = await scanBoundWorldBooks(
+          character,
           recentForScan,
           deps.maxWorldBookEntries
         );
@@ -603,7 +701,8 @@ export function useChat(deps: UseChatDeps) {
                   await triggerScribeSummary(
                     nonSystemNodes.slice(-deps.recentRounds),
                     aiNode.id,
-                    deps.scribeMode
+                    deps.scribeMode,
+                    character
                   );
                 }
               }
@@ -632,9 +731,8 @@ export function useChat(deps: UseChatDeps) {
 
                 // 扫描蒸馏区间激活的世界书条目
                 let distillWbEntries: WorldBookEntry[] = [];
-                const wbId = deps.characterA?.worldBookId;
-                if (wbId) {
-                  distillWbEntries = await deps.scanWorldBook(wbId, toDistill, deps.maxWorldBookEntries);
+                if (deps.characterA) {
+                  distillWbEntries = await scanBoundWorldBooks(deps.characterA, toDistill, deps.maxWorldBookEntries);
                 }
 
                 await deps.performDistillation({
@@ -713,8 +811,8 @@ export function useChat(deps: UseChatDeps) {
           (deps.tplEavesdropAppend || DEFAULT_TPL_EAVESDROP_APPEND),
       };
 
-      const wbEntries = await deps.scanWorldBook(
-        deps.characterB.worldBookId,
+      const wbEntries = await scanBoundWorldBooks(
+        deps.characterB,
         unarchived,
         deps.maxWorldBookEntries
       );
@@ -841,7 +939,8 @@ export function useChat(deps: UseChatDeps) {
               await triggerScribeSummary(
                 nonSystemNodes.slice(-deps.recentRounds),
                 node.id,
-                deps.scribeMode
+                deps.scribeMode,
+                deps.characterB
               );
             }
           }
@@ -915,9 +1014,8 @@ export function useChat(deps: UseChatDeps) {
 
       // 扫描蒸馏区间激活的世界书条目
       let distillWbEntries: WorldBookEntry[] = [];
-      const wbId = deps.characterA?.worldBookId;
-      if (wbId) {
-        distillWbEntries = await deps.scanWorldBook(wbId, toDistill, deps.maxWorldBookEntries);
+      if (deps.characterA) {
+        distillWbEntries = await scanBoundWorldBooks(deps.characterA, toDistill, deps.maxWorldBookEntries);
       }
 
       await deps.performDistillation({

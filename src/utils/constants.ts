@@ -6,6 +6,7 @@ export const DB_KEYS = {
   models: 'tavern_models',
   characters: 'tavern_characters',
   conversations: 'tavern_conversations',
+  conversationFolders: 'tavern_conversation_folders',
   messageNodes: 'tavern_message_nodes',
   worldbooks: 'tavern_worldbooks',
   globalStates: 'tavern_global_states',
@@ -81,6 +82,26 @@ export const DEFAULT_TPL_IMPLANT_SCRIBE_PREFIX = '[状态书]\n{content}';
 
 /** 蒸馏节点生成格式 — {total} 为总轮数，{summary} 为摘要内容 */
 export const DEFAULT_TPL_DISTILLED_NODE_PREFIX = '📝 记忆 第1轮-第{total}轮：{summary}';
+
+/** 状态书 AI 操控缓存世界书提示词 — 由状态书/Galgame 附加注入，要求结尾输出 JSON operations */
+export const DEFAULT_TPL_CACHE_WORLD_BOOK_PROMPT = `你还兼任<缓存世界书>维护员。请扫描本次负责的对话片段中重要的新道具、角色、地点、组织、世界观变化、长期状态变化。
+
+规则:
+1. 只记录值得未来复用的变化；不要记录短暂情绪、寒暄、重复设定。
+2. 若内容已存在于手动世界书关键词中，不要写入缓存世界书。
+3. 缓存世界书最多 {limit} 条；优先保留高价值、高优先级、最近变化。
+4. 状态书正文照常输出；若需要修改缓存世界书，只能在回复末尾追加一个 JSON 块。
+
+当前手动世界书关键词:
+{manualKeys}
+
+当前<缓存世界书>:
+{cacheEntries}
+
+JSON 块格式如下；无修改时不要输出该块:
+<CACHE_WORLDBOOK_JSON>
+{"operations":[{"op":"upsert","keys":["关键词","别名"],"value":"条目内容","priority":5},{"op":"delete","key":"要删除的关键词"}]}
+</CACHE_WORLDBOOK_JSON>`;
 
 /** 采样参数哨兵值 — 表示"不传采样参数"，兼容 GPT/Claude 等无需采样的模型 */
 export const SAMPLING_NONE = -1;

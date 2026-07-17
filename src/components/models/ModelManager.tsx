@@ -124,6 +124,15 @@ export default function ModelManager() {
     if (lat === -1) return { text: '未测试', color: 'text-slate-700 dark:text-slate-300' };
     if (lat === -2) return { text: '超时', color: 'text-red-400' };
     if (lat === -3) return { text: 'Error/CORS', color: 'text-red-400' };
+    if (lat <= -400) {
+      const status = -400 - lat;
+      if (status === 400) return { text: 'HTTP 400 请求错误', color: 'text-red-400' };
+      if (status === 401 || status === 403) return { text: `HTTP ${status} 鉴权失败`, color: 'text-red-400' };
+      if (status === 404) return { text: 'HTTP 404 路径错误', color: 'text-red-400' };
+      if (status === 429) return { text: 'HTTP 429 频率限制', color: 'text-red-400' };
+      if (status >= 500) return { text: `HTTP ${status} 服务端异常`, color: 'text-red-400' };
+      return { text: `HTTP ${status}`, color: 'text-red-400' };
+    }
     return { text: `${lat} ms`, color: lat < 500 ? 'text-green-400' : lat < 1500 ? 'text-amber-400' : 'text-red-400' };
   };
 
