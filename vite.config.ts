@@ -4,6 +4,7 @@ import { viteSingleFile } from 'vite-plugin-singlefile';
 
 export default defineConfig({
   plugins: [react(), viteSingleFile()],
+  base: '/easy-jiuguan-pro/',
   build: {
     target: 'es2020',
     cssCodeSplit: false,
