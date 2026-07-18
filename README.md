@@ -8,26 +8,39 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.5-blue?logo=typescript)](https://www.typescriptlang.org)
 [![Vite](https://img.shields.io/badge/Vite-5.4-646CFF?logo=vite)](https://vitejs.dev)
 [![Tailwind](https://img.shields.io/badge/Tailwind-3.4-38BDF8?logo=tailwindcss)](https://tailwindcss.com)
+[![Release](https://img.shields.io/badge/Release-v1.2_Public_Beta-f59e0b)](https://github.com/muqiao1234-ui/easy-jiuguan-pro)
 [![License](https://img.shields.io/badge/License-MIT-green)](./LICENSE)
 
 </div>
 
 ---
 
-## 📋 最近更新 (V1.2 内测版)
+## 📋 最近更新 (v1.2 公测版)
 
-**2026-07-17** — 双世界书 + 对话文件夹 + Easy角色卡 + 教学对话全面升级
+**2026-07-19** — 合并 v1.2 内测功能，并完成长对话、蒸馏和发布链路加固
 
-- 🆕 **双世界书系统**：每个角色绑定 A 书（手动维护）+ 缓存书（AI 自动维护，10 条上限），并发扫描、合并注入
-- 🆕 **缓存世界书**：AI 通过 `<CACHE_WORLDBOOK_JSON>` 协议输出 upsert/delete 操作，状态书/Galgame 引擎联动自动更新
-- 🆕 **Easy人物卡组装器**：7 模块勾选式拼装（引导头/文风部/核心人设/安全词/逻辑约束/回复示范/输出格式）
-- 🆕 **高级卡逆向**：AI 将世界书内容反向串联为主提示词（60%-80% 效率）
-- 🆕 **对话文件夹收纳**：自定义文件夹归类，删除文件夹不删对话
-- 🆕 **教学对话 v2**：新增对话 6（Easy角色卡与跨平台导入）+ 对话 7（双世界书系统），修复幻觉引用，加入学习路径总览
-- 🔧 **设置页改造**：废弃延迟测试 → 折叠式常见模型连接问题（400/401/429/CORS）
-- 🔧 **高级提示词**：11 → 13 项模板（新增状态书操控缓存书提示词）
-- 🔧 **Ping 负数修正**：HTTP 错误码悬停翻译
-- 🔧 **IndexedDB**：7 → 8 个 store（新增 `conversation_folders`）
+### 公测版新增与修复
+
+- 🚀 **长对话 v3 分片索引**：消息按节点分片存储，聊天列表 80 条分页；普通发送、状态书和蒸馏只查询必要窗口，不再反复加载完整历史
+- 💎 **完整轮次蒸馏**：自动/手动共用同一规划器，只处理完整 user + 角色回复轮次；不足阈值不执行，保留最近 N 轮不会再产生单轮或半轮摘要
+- 🔒 **蒸馏并发保护**：会话内单任务互斥，提交时复核来源节点；归档和结晶写入失败会回滚，空摘要不会归档原对话
+- ✏️ **可编辑记忆回廊**：读取当前会话全部记忆结晶，支持逐条编辑和保存；累计记忆只注入最新一份，减少重复 Token
+- 🎭 **角色 A/B 独立模型**：两个角色可分别绑定不同模型，蒸馏模型继续独立配置，便于控制成本和能力分配
+- 🧠 **推理标签过滤**：兼容 `<think>`、`<though>`、reasoning、analysis 等常见及畸形标签；流式正文隐藏推理内容，结构化 JSON 仍可回退提取
+- 🛡️ **缓存世界书边界加固**：仅显式 cache 类型可由 AI 修改；JSON operation、key、value、priority 全面校验，避免误截断普通世界书
+- ⚙️ **设置持久化与可读性**：蒸馏/上下文配置持久化，高级提示词直接显示可编辑实体默认值，连接问题说明适配浅色与深色主题
+- 🌐 **GitHub Pages 自动发布**：Actions 使用 Node 20 执行 `npm ci` 和生产构建，仅发布 `dist/`，修复直接发布源码造成的白屏
+
+### 内测版已包含
+
+- 📚 **双世界书系统**：每个角色绑定 A 书（手动维护）+ 缓存书（AI 自动维护，10 条上限），并发扫描、合并注入
+- 🔄 **缓存世界书 JSON 协议**：状态书/Galgame 通过 `<CACHE_WORLDBOOK_JSON>` 输出 upsert/delete 操作，支持手动“升华”到 A 书
+- 🧩 **Easy人物卡组装器**：7 模块勾选式拼装（引导头/文风部/核心人设/安全词/逻辑约束/回复示范/输出格式）
+- 🔍 **高级卡逆向**：AI 将世界书内容反向串联为主提示词，适配空白 System Prompt 的高级角色卡
+- 📁 **对话文件夹收纳**：自定义名称、折叠和成员管理；删除文件夹不删除内部对话
+- 🎓 **教学对话 v2**：新增 Easy角色卡与双世界书教程，默认教学内容自动归入预制教学文件夹
+- 🔧 **设置与连接诊断**：常见模型错误说明覆盖 400/401/403/404/429/5xx/CORS，Ping 结果翻译 HTTP 错误
+- 🧰 **13 项高级提示词**：包括状态书 AI 操控缓存世界书、蒸馏节点格式、身份锚点和世界书注入模板
 
 ---
 
@@ -43,6 +56,7 @@
 
 ### 🎭 双角色引擎
 - 同时绑定两个 AI 角色（角色 A + 角色 B），各自拥有独立的角色卡、System Prompt 和气泡颜色
+- 角色 A / B 可分别绑定不同模型，按角色能力和成本独立配置
 - 支持 **旁听模式**：让两个 AI 互相说话，你在旁边看戏
 - 角色隔离：每个角色只看得到自己的 System Prompt 和自己该看到的对话，不会"串台"
 
@@ -56,6 +70,9 @@
 ### 💎 记忆蒸馏 (Distillation)
 - 自动或手动把长对话压缩成「记忆结晶」，替代原始消息持续参与上下文
 - 让 AI 在长对话中不丢失早期设定，同时控制 token 消耗
+- 自动和手动共用完整轮次规划器，不拆分 user 与角色回复，不足阈值不会生成低质量小批次
+- 蒸馏任务具备互斥、来源复核、失败回滚和空摘要保护
+- **记忆回廊可编辑**：玩家可以直接修订任意记忆结晶；新结晶记录来源节点和真实轮次范围
 
 ### 🎮 Galgame 数值引擎
 - 像素风数值面板（好感度 / 心情 / 警惕度），AI 每次回复自动更新
@@ -65,6 +82,7 @@
 ### 📜 状态书 (State Book)
 - 吸附在 AI 气泡上的状态卡片，追踪当前场景、持有物品、角色状态等
 - 文本模式（AI 总结）和 Galgame 数值模式双引擎
+- 可选联动角色缓存世界书，通过可自定义 JSON 提示词自动维护重要道具、角色和世界观变化
 
 ### 🤝 互相认识
 - 一键让两个 AI 并发观察对方的角色卡，互相写出印象
@@ -80,7 +98,8 @@
 - **AI 气泡加粗变色**：角色 A 翠绿、角色 B 紫罗兰，浅深主题色阶自适应
 - 移动端抽屉式布局，桌面端双栏布局，无缝切换
 - ChatInput 折叠工具箱，界面简洁
-- 🆕 **对话文件夹收纳**：自定义文件夹归类，拖拽管理，删除文件夹不删对话
+- **长对话分页**：默认只渲染最新 80 条，可按需加载更早内容，流式输出按动画帧合并刷新
+- **对话文件夹收纳**：自定义文件夹归类，通过管理界面添加/移出对话，删除文件夹不删对话
 
 ### ⚙️ 高级定制
 - 13 项核心提示词模板可编辑（角色包裹、身份锚点、世界书前缀、蒸馏格式等）
@@ -90,12 +109,14 @@
 - 🆕 **Easy人物卡组装器**：7 模块勾选式拼装角色卡（引导头/文风部/核心人设/安全词/逻辑约束/示范/输出）
 - 🆕 **高级卡逆向**：AI 将世界书内容反向串联为主提示词（适用于空白 System Prompt 的"高级卡"）
 - 🆕 **常见模型连接问题**：折叠式错误码说明（400/401/429/CORS），替代废弃的延迟测试
+- **推理内容过滤**：隐藏多种模型泄漏到正文的 think/reasoning/analysis 标签，同时保留状态书与 Galgame JSON 解析能力
 
 ### 🔒 隐私与部署
 - **纯本地**：所有数据存储在浏览器 IndexedDB，不请求任何后端
 - **单文件 PWA**：`vite build` 产出单个 `index.html`，可直接用浏览器打开
 - Service Worker Cache-First，支持离线使用
 - 导出数据自动剔除 API Key，防止意外分享泄露
+- GitHub Actions 自动构建并发布 `dist/` 到 Pages，Vite 相对路径兼容仓库子目录
 
 ### 📚 内置教学预设
 - 首次打开自动注入 8 套教学对话，由「核桃（知性科研鼠族）」和「花生（可爱贵族鼠族）」全程引导
@@ -111,7 +132,7 @@
 | 框架 | React 18 + TypeScript |
 | 构建 | Vite 5 + vite-plugin-singlefile（单文件输出） |
 | 样式 | Tailwind CSS 3（`darkMode: 'class'`，全组件双主题适配） |
-| 持久化 | localForage → IndexedDB（8 个 store + 异步写锁） |
+| 持久化 | localForage → IndexedDB（8 个 store + 消息 v3 分片索引 + 异步写锁） |
 | Markdown | react-markdown |
 | PWA | Service Worker（Cache-First）+ Web App Manifest |
 
@@ -153,7 +174,7 @@ npm run build
 │   ├── main.tsx            # React 入口 + SW 注册
 │   ├── App.tsx             # 顶层组件 + 预设注入 + 视图分发
 │   ├── types/
-│   │   └── index.ts        # 全部 TypeScript 类型定义（24 个 Action）
+│   │   └── index.ts        # 全部 TypeScript 类型定义（25 个 Action）
 │   ├── utils/
 │   │   ├── constants.ts    # 默认配置 + 气泡颜色 + 13 个 TPL 模板
 │   │   ├── context.ts      # 上下文拼装引擎 assembleContext
@@ -163,11 +184,13 @@ npm run build
 │   │   ├── wallpaper.ts    # 壁纸压缩
 │   │   ├── sillyTavernCard.ts # SillyTavern V2 导入导出
 │   │   ├── cacheWorldBook.ts  # 缓存世界书（AI 自动维护协议）
+│   │   ├── distillation.ts # 完整轮次蒸馏批次规划器
+│   │   ├── responseText.ts # think/reasoning 标签过滤
 │   │   └── presets.ts      # 内置预设资源 + 幂等注入
 │   ├── hooks/
 │   │   ├── useApp.tsx      # 全局状态 reducer + 持久化
 │   │   ├── useChat.ts      # 消息发送 / 旁听 / 流式 / Galgame 触发
-│   │   ├── useDistillation.ts # 蒸馏执行
+│   │   ├── useDistillation.ts # 蒸馏执行 + 单任务互斥
 │   │   ├── useWorldBookScanner.ts # 世界书扫描（防 ReDoS）
 │   │   ├── useMessageNodes.ts   # 消息节点 CRUD + 分支克隆
 │   │   ├── useModels.ts        # 模型 CRUD + Ping
@@ -177,7 +200,7 @@ npm run build
 │   │   └── useWorldBooks.ts    # 世界书 CRUD
 │   ├── db/
 │   │   ├── index.ts        # localForage 实例 + initDB
-│   │   └── stores.ts       # CRUD 函数 + 异步互斥写锁
+│   │   └── stores.ts       # CRUD + v3 消息索引 + 蒸馏提交/回滚 + 写锁
 │   ├── components/
 │   │   ├── chat/           # 聊天核心（ChatArea / Bubble / Input / GalgameCard 等）
 │   │   ├── settings/       # 设置面板（8 大区块）
@@ -218,14 +241,14 @@ npm run build
                │
 ┌──────────────┴──────────────────────┐
 │  ④ 状态与配置                       │
-│  24 个 AppAction · 13 模板可编辑     │
+│  25 个 AppAction · 13 模板可编辑     │
 │  boldColorize · theme · wallpaper    │
 └──────────────┬──────────────────────┘
                │
 ┌──────────────┴──────────────────────┐
 │  ⑤ IndexedDB (8 Store + 写锁)       │
 │  models · characters · conversations │
-│  message_nodes · worldbooks          │
+│  message_nodes(v3分片索引) · worldbooks │
 │  global_states · ui_settings         │
 │  conversation_folders                │
 └─────────────────────────────────────┘
@@ -300,6 +323,12 @@ npm run preview  # 预览构建产物
 
 **Q: 两个角色会互相"串台"吗？**  
 不会。每个角色有自己的 System Prompt，对方的发言会被包裹为「独立实体」标签，末尾还会注入身份锚点 System 消息防止角色漂变。所有模板均可自定义。
+
+**Q: 点击手动蒸馏后为什么提示轮次不足？**
+公测版只蒸馏完整对话轮次。默认阈值为 10 轮，并保留最近 3 轮，因此需要至少 13 个完整未归档轮次才会执行；这样可以避免只浓缩一轮或拆开用户消息与角色回复。
+
+**Q: 编辑记忆回廊后会影响后续对话吗？**
+编辑最新累计结晶会直接影响后续上下文。历史结晶作为快照保留，编辑历史条目只改变回廊记录；需要纠正 AI 当前记忆时，请修改回廊中的最新一份结晶。
 
 ---
 
