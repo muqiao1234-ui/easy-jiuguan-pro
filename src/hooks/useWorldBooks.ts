@@ -36,7 +36,7 @@ export function useWorldBooks() {
 
   const updateWorldBook = useCallback(async (id: string, updates: Partial<WorldBook>) => {
     const current = worldbooks.find((w) => w.id === id);
-    const isCache = current?.kind === 'cache' || updates.kind === 'cache' || current?.entryLimit === CACHE_WORLD_BOOK_LIMIT;
+    const isCache = current?.kind === 'cache' || updates.kind === 'cache';
     const safeUpdates = isCache && updates.entries
       ? { ...updates, kind: 'cache' as const, entryLimit: CACHE_WORLD_BOOK_LIMIT, entries: updates.entries.slice(0, CACHE_WORLD_BOOK_LIMIT) }
       : updates;
@@ -55,7 +55,7 @@ export function useWorldBooks() {
     async (wbId: string, keys: string[], value: string, priority: number) => {
       const wb = worldbooks.find((w) => w.id === wbId);
       if (!wb) return;
-      const isCache = wb.kind === 'cache' || wb.entryLimit === CACHE_WORLD_BOOK_LIMIT;
+      const isCache = wb.kind === 'cache';
       if (isCache && wb.entries.length >= CACHE_WORLD_BOOK_LIMIT) return;
       const entry: WorldBookEntry = { id: generateId(), keys, value, priority };
       const updatedEntries = isCache
@@ -95,7 +95,7 @@ export function useWorldBooks() {
     ) => {
       const wb = worldbooks.find((w) => w.id === wbId);
       if (!wb) return 0;
-      const isCache = wb.kind === 'cache' || wb.entryLimit === CACHE_WORLD_BOOK_LIMIT;
+      const isCache = wb.kind === 'cache';
       const entries: WorldBookEntry[] = newEntries.map((e) => ({
         id: generateId(),
         keys: e.keys,

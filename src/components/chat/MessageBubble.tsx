@@ -26,7 +26,7 @@ interface MessageBubbleProps {
   boldColorize?: boolean;
 }
 
-export default function MessageBubble({
+function MessageBubble({
   node,
   characterAName,
   characterBName,
@@ -387,3 +387,5 @@ export default function MessageBubble({
     </>
   );
 }
+
+export default React.memo(MessageBubble);

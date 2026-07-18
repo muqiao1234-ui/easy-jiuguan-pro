@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import type {
   Character,
   MessageNode,
@@ -15,6 +15,7 @@ import type {
 import { SSEParser } from '../utils/sse';
 import { assembleContext, calcWorldBookCooldown } from '../utils/context';
 import { generateId } from '../utils/id';
+import { filterStreamingReasoningText, stripReasoningBlocks } from '../utils/responseText';
 import { SCRIBE_SYSTEM_PROMPT, DEFAULT_TPL_GALGAME_CHAR_INJECTION, DEFAULT_TPL_EAVESDROP_APPEND, DEFAULT_TPL_IMPLANT_MEMORY_PREFIX, DEFAULT_TPL_IMPLANT_SCRIBE_PREFIX, DEFAULT_TPL_DISTILLED_NODE_PREFIX, buildSamplingParams } from '../utils/constants';
 import {
   GALGAME_TRIGGER_INTERVAL,
@@ -31,6 +32,7 @@ import {
   mergeCacheWorldBookEntries,
   normalizeCacheWorldBook,
 } from '../utils/cacheWorldBook';
+import { planDistillation } from '../utils/distillation';
 import * as Stores from '../db/stores';
 
 /** SSE 流式读取空闲超时：若服务端在 30s 内未发送任何新 chunk，视为已僵死并自动断开 */
@@ -41,7 +43,8 @@ export interface UseChatDeps {
   conversationId: string | null;
   characterA: Character | null;
   characterB: Character | null;
-  chatModelId: string | null;
+  charAModelId: string | null;
+  charBModelId: string | null;
   distillModelId: string | null;
   scribeModelId: string | null;
   scribeEnabled: boolean;
@@ -66,7 +69,17 @@ export interface UseChatDeps {
   batchUpdateNodes: (
     updates: Array<{ id: string; changes: Partial<MessageNode> }>
   ) => Promise<void>;
-  getNodesByConversation: (convId: string) => Promise<MessageNode[]>;
+  queryNodesByConversation: (
+    convId: string,
+    query?: Stores.MessageNodeQuery
+  ) => Promise<MessageNode[]>;
+  countNodesByConversation: (
+    convId: string,
+    query?: Omit<Stores.MessageNodeQuery, 'order' | 'limit'>
+  ) => Promise<number>;
+  getMessageNodeById: (id: string) => Promise<MessageNode | undefined>;
+  getMessageNodeMetadataByConversation: (convId: string) => Promise<Stores.MessageNodeMetadata[]>;
+  commitDistillationBatch: (sourceIds: string[], distilledNode: MessageNode) => Promise<boolean>;
   scanWorldBook: (
     wbId: string | undefined,
     msgs: MessageNode[],
@@ -75,6 +88,7 @@ export interface UseChatDeps {
   performDistillation: (params: any) => Promise<DistillationResult>;
   updateConversation: (id: string, updates: any) => Promise<void>;
   onNodesRefresh: (nodes: MessageNode[]) => void;
+  onDistillationComplete?: () => void;
   // 高级提示词模板（空=用默认）
   tplUserWrapper?: string;
   tplOtherCharWrapper?: string;
@@ -100,10 +114,44 @@ export function useChat(deps: UseChatDeps) {
   /** 调试用：最近一次发送给角色的完整 messages 数组 */
   const [lastPrompt, setLastPrompt] = useState<{ role: string; content: string }[] | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const streamingFrameRef = useRef<number | null>(null);
+  const pendingStreamingContentRef = useRef('');
   /** 世界书每词条冷却状态：entryId → 上次注入的轮数 */
   const worldBookCooldownRef = useRef<Map<string, number>>(new Map());
   /** 当前对话轮数计数器 */
   const roundCounterRef = useRef<number>(0);
+
+  const loadDistillationBatch = useCallback(async () => {
+    if (!deps.conversationId) return null;
+    const candidates = await deps.getMessageNodeMetadataByConversation(deps.conversationId);
+    const plan = planDistillation(candidates, deps.triggerThreshold, deps.retainRecentCount);
+    if (!plan) return null;
+    const nodes = await Promise.all(plan.sourceIds.map((id) => deps.getMessageNodeById(id)));
+    if (nodes.some((node) => !node)) return null;
+    return { plan, nodes: nodes as MessageNode[] };
+  }, [deps]);
+
+  const publishStreamingContent = useCallback((content: string) => {
+    pendingStreamingContentRef.current = content;
+    if (streamingFrameRef.current !== null) return;
+    streamingFrameRef.current = requestAnimationFrame(() => {
+      streamingFrameRef.current = null;
+      setStreamingContent(pendingStreamingContentRef.current);
+    });
+  }, []);
+
+  const clearStreamingContent = useCallback(() => {
+    if (streamingFrameRef.current !== null) {
+      cancelAnimationFrame(streamingFrameRef.current);
+      streamingFrameRef.current = null;
+    }
+    pendingStreamingContentRef.current = '';
+    setStreamingContent('');
+  }, []);
+
+  useEffect(() => () => {
+    if (streamingFrameRef.current !== null) cancelAnimationFrame(streamingFrameRef.current);
+  }, []);
 
   const scanBoundWorldBooks = useCallback(
     async (character: Character, recentMessages: MessageNode[], maxEntries: number): Promise<WorldBookEntry[]> => {
@@ -128,7 +176,7 @@ export function useChat(deps: UseChatDeps) {
     async (character?: Character | null): Promise<{ cacheBook: WorldBook; manualBook: WorldBook | null } | null> => {
       if (!deps.scribeCacheWorldBookEnabled || !character?.cacheWorldBookId) return null;
       const cacheBookRaw = await Stores.getWorldBookById(character.cacheWorldBookId);
-      if (!cacheBookRaw) return null;
+      if (!cacheBookRaw || cacheBookRaw.kind !== 'cache') return null;
 
       const cacheBook = normalizeCacheWorldBook(cacheBookRaw);
       if (
@@ -152,12 +200,13 @@ export function useChat(deps: UseChatDeps) {
   );
 
   const applyCacheWorldBookPatch = useCallback(
-    async (cacheBookId: string, operations: unknown[] | undefined) => {
-      if (!operations || operations.length === 0) return;
+    async (cacheBookId: string, operations: unknown, manualBook: WorldBook | null = null) => {
+      if (!Array.isArray(operations) || operations.length === 0) return;
       const latestBook = await Stores.getWorldBookById(cacheBookId);
-      if (!latestBook) return;
+      if (!latestBook || latestBook.kind !== 'cache') return;
       const normalized = normalizeCacheWorldBook(latestBook);
-      const nextEntries = mergeCacheWorldBookEntries(normalized.entries, operations as any);
+      const manualKeys = (manualBook?.entries || []).flatMap((entry) => entry.keys);
+      const nextEntries = mergeCacheWorldBookEntries(normalized.entries, operations, manualKeys);
       await Stores.updateWorldBook(cacheBookId, {
         kind: 'cache',
         entryLimit: CACHE_WORLD_BOOK_LIMIT,
@@ -248,13 +297,18 @@ export function useChat(deps: UseChatDeps) {
         if (!resp.ok) throw new Error(`状态书 API 错误: ${resp.status}`);
 
         const data = await resp.json();
-        const rawScribeContent = data.choices?.[0]?.message?.content || '';
+        const message = data.choices?.[0]?.message || {};
+        const rawReasoning = message.reasoning_content || '';
+        const rawScribeContent = stripReasoningBlocks(message.content || data.choices?.[0]?.text || '');
         const scribeTokenCost = data.usage?.total_tokens || undefined;
-        const { displayText, patch } = extractCacheWorldBookPatch(rawScribeContent);
+        let { displayText, patch } = extractCacheWorldBookPatch(rawScribeContent);
+        if (!patch && rawReasoning) {
+          patch = extractCacheWorldBookPatch(rawReasoning).patch;
+        }
         const newScribeContent = displayText || (!patch ? rawScribeContent : '');
 
         if (cacheContext && patch?.operations?.length) {
-          await applyCacheWorldBookPatch(cacheContext.cacheBook.id, patch.operations);
+          await applyCacheWorldBookPatch(cacheContext.cacheBook.id, patch.operations, cacheContext.manualBook);
         }
 
         if (newScribeContent.trim()) {
@@ -267,7 +321,7 @@ export function useChat(deps: UseChatDeps) {
             ...(scribeTokenCost !== undefined ? { scribeTokenCost } : {}),
           });
 
-          const updatedNodes = await deps.getNodesByConversation(deps.conversationId);
+          const updatedNodes = await deps.queryNodesByConversation(deps.conversationId, { limit: 100 });
           deps.onNodesRefresh(updatedNodes);
         }
       } catch (e: any) {
@@ -383,11 +437,14 @@ export function useChat(deps: UseChatDeps) {
         const content = data.choices?.[0]?.message?.content || '';
         const reasoning = data.choices?.[0]?.message?.reasoning_content || '';
         const finishReason = data.choices?.[0]?.finish_reason || '';
-        const rawContent = content || reasoning || data.choices?.[0]?.text || '';
-        const { displayText: galgameDisplayText, patch } = extractCacheWorldBookPatch(rawContent);
+        const rawContent = stripReasoningBlocks(content || data.choices?.[0]?.text || '');
+        let { displayText: galgameDisplayText, patch } = extractCacheWorldBookPatch(rawContent);
+        if (!patch && reasoning) {
+          patch = extractCacheWorldBookPatch(reasoning).patch;
+        }
         const parseSource = galgameDisplayText || rawContent;
         if (cacheContext && patch?.operations?.length) {
-          await applyCacheWorldBookPatch(cacheContext.cacheBook.id, patch.operations);
+          await applyCacheWorldBookPatch(cacheContext.cacheBook.id, patch.operations, cacheContext.manualBook);
         }
         console.log('[Galgame] 完整响应: %s', JSON.stringify(data).slice(0, 500));
         console.log('[Galgame] finish_reason=%s, content.len=%d, reasoning.len=%d, rawContent.len=%d',
@@ -399,7 +456,8 @@ export function useChat(deps: UseChatDeps) {
         // 尝试从 reasoning_content 中提取最后一个 JSON 对象（模型可能在推理末尾输出了结果）
         if (!galgameData && !content && reasoning) {
           console.warn('[Galgame] content 为空，尝试从 reasoning_content 提取 JSON');
-          galgameData = parseGalgameResponse(extractCacheWorldBookPatch(reasoning).displayText || reasoning, charName);
+          const reasoningSource = extractCacheWorldBookPatch(reasoning).displayText || reasoning;
+          galgameData = parseGalgameResponse(reasoningSource, charName);
         }
 
         if (galgameData) {
@@ -414,7 +472,7 @@ export function useChat(deps: UseChatDeps) {
             galgameData,
             ...(scribeTokenCost !== undefined ? { scribeTokenCost } : {}),
           });
-          const updatedNodes = await deps.getNodesByConversation(deps.conversationId);
+          const updatedNodes = await deps.queryNodesByConversation(deps.conversationId, { limit: 100 });
           deps.onNodesRefresh(updatedNodes);
         } else {
           console.warn('[Galgame] 解析失败, rawContent: %s', rawContent);
@@ -430,8 +488,9 @@ export function useChat(deps: UseChatDeps) {
 
   const sendMessage = useCallback(
     async (target: SendTarget, userContent: string, options?: SendOptions) => {
-      if (!deps.conversationId || !deps.chatModelId) {
-        setError('请先选择对话和聊天模型');
+      const modelId = target.type === 'charA' ? deps.charAModelId : deps.charBModelId;
+      if (!deps.conversationId || !modelId) {
+        setError(`请先选择对话和角色${target.type === 'charA' ? 'A' : 'B'}模型`);
         return;
       }
       const character =
@@ -445,7 +504,7 @@ export function useChat(deps: UseChatDeps) {
       const isRetry = options?.skipUserNode === true && !!options.existingUserNodeId;
 
       setStreaming(true);
-      setStreamingContent('');
+      clearStreamingContent();
       setStreamingTarget(target);
       setError(null);
 
@@ -460,14 +519,14 @@ export function useChat(deps: UseChatDeps) {
         // 重试场景下跳过此分支（避免重复植入）
         let skipAutoDistilled = false;
         if (implantMemoryArmed && !isRetry) {
-          const allNodesBefore = await deps.getNodesByConversation(deps.conversationId);
-          const latestDistilled = [...allNodesBefore]
-            .filter((n) => n.role === 'distilled')
-            .sort((a, b) => b.timestamp - a.timestamp)[0];
-          // 查找最近的 scribeUpdate（从 assistant 节点中获取）
-          const latestScribeNode = [...allNodesBefore]
-            .filter((n) => (n.role === 'charA' || n.role === 'charB') && n.scribeUpdate?.isEnabled)
-            .sort((a, b) => b.timestamp - a.timestamp)[0];
+          const [[latestDistilled], [latestScribeNode]] = await Promise.all([
+            deps.queryNodesByConversation(deps.conversationId, { roles: ['distilled'], limit: 1 }),
+            deps.queryNodesByConversation(deps.conversationId, {
+              roles: ['charA', 'charB'],
+              hasScribeUpdate: true,
+              limit: 1,
+            }),
+          ]);
           const parts: string[] = [];
           if (latestDistilled) {
             parts.push(
@@ -504,8 +563,7 @@ export function useChat(deps: UseChatDeps) {
         let userNode: MessageNode;
         if (isRetry) {
           // 重新从 DB 读取，确保拿到时间戳准确的真实节点
-          const tempNodes = await deps.getNodesByConversation(deps.conversationId);
-          const existing = tempNodes.find((n) => n.id === options!.existingUserNodeId);
+          const existing = await deps.getMessageNodeById(options!.existingUserNodeId!);
           if (!existing) {
             throw new Error('重试失败：找不到要复用的 user 节点');
           }
@@ -524,13 +582,19 @@ export function useChat(deps: UseChatDeps) {
           await deps.addMessageNode(userNode);
         }
 
-        const allNodes = await deps.getNodesByConversation(deps.conversationId);
-        const unarchived = allNodes.filter(
-          (n) => !n.isArchived && n.role !== 'distilled' && n.role !== 'scribe'
-        );
-        const distilled = allNodes
-          .filter((n) => n.role === 'distilled')
-          .slice(-deps.maxDistilledNodes);
+        const [unarchived, distilledCandidates] = await Promise.all([
+          deps.queryNodesByConversation(deps.conversationId, {
+            roles: ['user', 'charA', 'charB', 'system'],
+            isArchived: false,
+            limit: deps.recentRounds,
+          }),
+          deps.queryNodesByConversation(deps.conversationId, {
+            roles: ['distilled'],
+            limit: Math.max(1, deps.maxDistilledNodes),
+          }),
+        ]);
+        const latestCumulative = [...distilledCandidates].reverse().find((node) => node.distillationMeta?.cumulative);
+        const distilled = latestCumulative ? [latestCumulative] : distilledCandidates;
         // 重试场景下 userNode 已经在 unarchived 中（复用既有节点），无需再追加；
         // 普通场景下 userNode 刚刚 addMessageNode，已写入 DB，也已在 allNodes → unarchived 中。
         // 不再额外追加 userNode，否则会导致当前用户消息重复注入上下文，token 虚高、世界书误触发。
@@ -543,8 +607,8 @@ export function useChat(deps: UseChatDeps) {
           deps.maxWorldBookEntries
         );
 
-        const model = await deps.getModelById(deps.chatModelId);
-        if (!model) throw new Error('聊天模型未找到');
+        const model = await deps.getModelById(modelId);
+        if (!model) throw new Error(`角色${target.type === 'charA' ? 'A' : 'B'}模型未找到`);
 
         // 递增轮数计数器
         roundCounterRef.current += 1;
@@ -623,7 +687,7 @@ export function useChat(deps: UseChatDeps) {
           for (const chunk of chunks) {
             if (chunk.done) break;
             fullContent += chunk.content;
-            setStreamingContent(fullContent);
+            publishStreamingContent(filterStreamingReasoningText(fullContent));
           }
         }
 
@@ -650,7 +714,7 @@ export function useChat(deps: UseChatDeps) {
           conversationId: deps.conversationId,
           role: target.type === 'charB_eavesdrop' ? 'charB' : target.type,
           senderName: character.name,
-          content: fullContent || '(空响应)',
+          content: stripReasoningBlocks(fullContent) || '(空响应)',
           isArchived: false,
           timestamp: Date.now(),
           tokenCost,
@@ -660,7 +724,9 @@ export function useChat(deps: UseChatDeps) {
         };
         await deps.addMessageNode(aiNode);
 
-        const updatedNodes = await deps.getNodesByConversation(deps.conversationId);
+        const updatedNodes = await deps.queryNodesByConversation(deps.conversationId, {
+          limit: Math.max(100, deps.recentRounds * 2),
+        });
         deps.onNodesRefresh(updatedNodes);
 
         // 第三书记员 + 自动蒸馏：串行触发，避免对限速严格的 API（如智谱）触发 429
@@ -669,11 +735,18 @@ export function useChat(deps: UseChatDeps) {
         (async () => {
           // 1. Galgame / 文本状态书
           if (deps.scribeEnabled && deps.scribeModelId) {
-            const nonSystemNodes = updatedNodes.filter(
-              (n) => n.role !== 'system' && n.role !== 'distilled' && n.role !== 'scribe' && !n.isArchived
-            );
             const aiRole = target.type === 'charB_eavesdrop' ? 'charB' : target.type;
-            const assistantCount = nonSystemNodes.filter((n) => n.role === aiRole).length;
+            const [nonSystemNodes, assistantCount] = await Promise.all([
+              deps.queryNodesByConversation(deps.conversationId!, {
+                roles: ['user', 'charA', 'charB'],
+                isArchived: false,
+                limit: deps.recentRounds,
+              }),
+              deps.countNodesByConversation(deps.conversationId!, {
+                roles: [aiRole],
+                isArchived: false,
+              }),
+            ]);
             const triggerInterval = deps.scribeEngine === 'galgame'
               ? GALGAME_TRIGGER_INTERVAL
               : deps.scribeTriggerInterval;
@@ -713,52 +786,47 @@ export function useChat(deps: UseChatDeps) {
 
           // 2. 自动蒸馏（Galgame/scribe 完成后再触发，避免并发）
           if (deps.autoTriggerDistillation && deps.distillModelId) {
-            const newUnarchived = updatedNodes
-              .filter(
-                (n) => !n.isArchived && n.role !== 'distilled' && n.role !== 'system' && n.role !== 'scribe'
-              )
-              .sort((a, b) => a.timestamp - b.timestamp);
-            if (newUnarchived.length >= deps.triggerThreshold) {
-              // 滑动窗口：只蒸馏最旧的 (总数 - retainRecentCount) 条，
-              // 最近 retainRecentCount 条保持 isArchived: false 作为下一轮即时上下文
-              const retain = Math.max(0, deps.retainRecentCount ?? 0);
-              const toDistill = newUnarchived.slice(0, newUnarchived.length - retain);
-              if (toDistill.length > 0) {
+            const batch = await loadDistillationBatch();
+            if (batch) {
                 // 查找上一轮记忆结晶（取最新的 distilled 节点）
-                const prevDistilled = updatedNodes
-                  .filter((n) => n.role === 'distilled' && n.conversationId === deps.conversationId)
-                  .sort((a, b) => b.timestamp - a.timestamp)[0];
+                const [prevDistilled] = await deps.queryNodesByConversation(deps.conversationId!, {
+                  roles: ['distilled'],
+                  limit: 1,
+                });
 
                 // 扫描蒸馏区间激活的世界书条目
                 let distillWbEntries: WorldBookEntry[] = [];
                 if (deps.characterA) {
-                  distillWbEntries = await scanBoundWorldBooks(deps.characterA, toDistill, deps.maxWorldBookEntries);
+                  distillWbEntries = await scanBoundWorldBooks(deps.characterA, batch.nodes, deps.maxWorldBookEntries);
                 }
 
                 await deps.performDistillation({
-                  nodes: toDistill,
+                  nodes: batch.nodes,
+                  sourceNodeIds: batch.plan.sourceIds,
+                  roundStart: (prevDistilled?.distillationMeta?.roundEnd ?? 0) + 1,
+                  roundEnd: (prevDistilled?.distillationMeta?.roundEnd ?? 0) + batch.plan.selectedRounds,
                   distillModelId: deps.distillModelId,
                   distillationPrompt: deps.distillationPrompt,
                   tplDistilledNodePrefix: deps.tplDistilledNodePrefix,
                   prevDistilledContent: prevDistilled?.content || null,
                   activatedWorldBookEntries: distillWbEntries,
                   getModelById: deps.getModelById,
-                  addMessageNode: deps.addMessageNode,
-                  batchUpdateNodes: deps.batchUpdateNodes,
+                  commitDistillationBatch: deps.commitDistillationBatch,
                 });
-              }
+                deps.onDistillationComplete?.();
             }
           }
         })().catch(console.error);
       } catch (e: any) {
         if (e.name === 'AbortError') {
-          if (fullContent.trim()) {
+          const visibleContent = stripReasoningBlocks(fullContent);
+          if (visibleContent.trim()) {
             const partialNode: MessageNode = {
               id: generateId(),
               conversationId: deps.conversationId,
               role: target.type === 'charB_eavesdrop' ? 'charB' : target.type,
               senderName: character.name,
-              content: fullContent,
+              content: visibleContent,
               isArchived: false,
               timestamp: Date.now(),
               tokenCost: Math.ceil(fullContent.length * 0.5),
@@ -767,7 +835,7 @@ export function useChat(deps: UseChatDeps) {
               tokenCostTotal: (preTryInputTokens ?? 0) + Math.ceil(fullContent.length * 0.5),
             };
             await deps.addMessageNode(partialNode);
-            const updatedNodes = await deps.getNodesByConversation(deps.conversationId);
+            const updatedNodes = await deps.queryNodesByConversation(deps.conversationId, { limit: 100 });
             deps.onNodesRefresh(updatedNodes);
           }
         } else {
@@ -775,7 +843,7 @@ export function useChat(deps: UseChatDeps) {
         }
       } finally {
         setStreaming(false);
-        setStreamingContent('');
+        clearStreamingContent();
         setStreamingTarget(null);
         abortRef.current = null;
       }
@@ -784,25 +852,31 @@ export function useChat(deps: UseChatDeps) {
   );
 
   const triggerEavesdrop = useCallback(async () => {
-    if (!deps.conversationId || !deps.chatModelId || !deps.characterB) {
-      setError('请先选择对话、聊天模型和角色B');
+    if (!deps.conversationId || !deps.charBModelId || !deps.characterB) {
+      setError('请先选择对话、角色B模型和角色B');
       return;
     }
 
     setStreaming(true);
-    setStreamingContent('');
+    clearStreamingContent();
     setStreamingTarget({ type: 'charB', characterId: deps.characterB.id });
     setError(null);
     let fullContent = '';
 
     try {
-      const allNodes = await deps.getNodesByConversation(deps.conversationId);
-      const unarchived = allNodes
-        .filter((n) => !n.isArchived && n.role !== 'distilled' && n.role !== 'scribe')
-        .slice(-deps.recentRounds);
-      const distilled = allNodes
-        .filter((n) => n.role === 'distilled')
-        .slice(-deps.maxDistilledNodes);
+      const [unarchived, distilledCandidates] = await Promise.all([
+        deps.queryNodesByConversation(deps.conversationId, {
+          roles: ['user', 'charA', 'charB', 'system'],
+          isArchived: false,
+          limit: deps.recentRounds,
+        }),
+        deps.queryNodesByConversation(deps.conversationId, {
+          roles: ['distilled'],
+          limit: Math.max(1, deps.maxDistilledNodes),
+        }),
+      ]);
+      const latestCumulative = [...distilledCandidates].reverse().find((item) => item.distillationMeta?.cumulative);
+      const distilled = latestCumulative ? [latestCumulative] : distilledCandidates;
 
       const charBWithEavesdrop: Character = {
         ...deps.characterB,
@@ -817,8 +891,8 @@ export function useChat(deps: UseChatDeps) {
         deps.maxWorldBookEntries
       );
 
-      const model = await deps.getModelById(deps.chatModelId);
-      if (!model) throw new Error('聊天模型未找到');
+      const model = await deps.getModelById(deps.charBModelId);
+      if (!model) throw new Error('角色B模型未找到');
 
       roundCounterRef.current += 1;
       const currentRound = roundCounterRef.current;
@@ -878,7 +952,7 @@ export function useChat(deps: UseChatDeps) {
         for (const chunk of parser.parse(value)) {
           if (chunk.done) break;
           fullContent += chunk.content;
-          setStreamingContent(fullContent);
+          publishStreamingContent(filterStreamingReasoningText(fullContent));
         }
       }
 
@@ -903,7 +977,7 @@ export function useChat(deps: UseChatDeps) {
         conversationId: deps.conversationId,
         role: 'charB',
         senderName: deps.characterB.name,
-        content: fullContent || '(没说话)',
+        content: stripReasoningBlocks(fullContent) || '(没说话)',
         isArchived: false,
         timestamp: Date.now(),
         tokenCost,
@@ -913,16 +987,23 @@ export function useChat(deps: UseChatDeps) {
       };
       await deps.addMessageNode(node);
 
-      const updatedNodes = await deps.getNodesByConversation(deps.conversationId);
+      const updatedNodes = await deps.queryNodesByConversation(deps.conversationId, {
+        limit: Math.max(100, deps.recentRounds * 2),
+      });
       deps.onNodesRefresh(updatedNodes);
 
       // 旁听也触发状态书（如果模式匹配）— 串行触发避免限速 API 429
       if (deps.scribeEnabled && deps.scribeModelId) {
-        const nonSystemNodes = updatedNodes.filter(
-          (n) => n.role !== 'system' && n.role !== 'distilled' && n.role !== 'scribe' && !n.isArchived
-        );
+        const nonSystemNodes = await deps.queryNodesByConversation(deps.conversationId, {
+          roles: ['user', 'charA', 'charB'],
+          isArchived: false,
+          limit: deps.recentRounds,
+        });
         // 以角色 B 的 assistant 消息数作为轮数
-        const assistantCount = nonSystemNodes.filter((n) => n.role === 'charB').length;
+        const assistantCount = await deps.countNodesByConversation(deps.conversationId, {
+          roles: ['charB'],
+          isArchived: false,
+        });
         const triggerInterval = deps.scribeEngine === 'galgame'
           ? GALGAME_TRIGGER_INTERVAL
           : deps.scribeTriggerInterval;
@@ -948,20 +1029,21 @@ export function useChat(deps: UseChatDeps) {
       }
     } catch (e: any) {
         if (e.name === 'AbortError') {
-          if (fullContent.trim()) {
+          const visibleContent = stripReasoningBlocks(fullContent);
+          if (visibleContent.trim()) {
             const partialNode: MessageNode = {
               id: generateId(),
               conversationId: deps.conversationId,
               role: 'charB',
               senderName: deps.characterB.name,
-              content: fullContent,
+              content: visibleContent,
               isArchived: false,
               timestamp: Date.now(),
               tokenCost: Math.ceil(fullContent.length * 0.5),
               tokenCostIsExact: false,
             };
             await deps.addMessageNode(partialNode);
-            const updatedNodes = await deps.getNodesByConversation(deps.conversationId);
+            const updatedNodes = await deps.queryNodesByConversation(deps.conversationId, { limit: 100 });
             deps.onNodesRefresh(updatedNodes);
           }
         } else {
@@ -969,7 +1051,7 @@ export function useChat(deps: UseChatDeps) {
         }
       } finally {
       setStreaming(false);
-      setStreamingContent('');
+      clearStreamingContent();
       setStreamingTarget(null);
       abortRef.current = null;
     }
@@ -981,60 +1063,44 @@ export function useChat(deps: UseChatDeps) {
       return;
     }
     try {
-      const allNodes = await deps.getNodesByConversation(deps.conversationId);
-      const unarchived = allNodes
-        .filter(
-          (n) =>
-            !n.isArchived &&
-            n.role !== 'distilled' &&
-            n.role !== 'system' &&
-            n.role !== 'scribe'
-        )
-        .sort((a, b) => a.timestamp - b.timestamp);
-      if (unarchived.length === 0) {
-        setError('无可蒸馏的对话');
-        return;
-      }
-      // 既往不咎：手动蒸馏只取一个 triggerThreshold 批次，不杀前面全部积累
-      // 滑动窗口：同时保留最近 retainRecentCount 条不归档
-      const retain = Math.max(0, deps.retainRecentCount ?? 0);
-      const maxBatch = Math.max(1, deps.triggerThreshold); // 一个批次最多 triggerThreshold 条
-      const maxDistillable = Math.max(0, unarchived.length - retain);
-      // 手动蒸馏：只取最旧的 min(maxBatch, maxDistillable) 条
-      const toDistill = unarchived.slice(0, Math.min(maxBatch, maxDistillable));
-      if (toDistill.length === 0) {
-        setError(`保留太少消息可用于蒸馏（当前 ${unarchived.length} 条，需保留 ${retain} 条）`);
+      const batch = await loadDistillationBatch();
+      if (!batch) {
+        setError(`完整可蒸馏轮次不足，至少需要 ${Math.max(1, deps.triggerThreshold)} 轮，并保留最近 ${Math.max(0, deps.retainRecentCount)} 轮`);
         return;
       }
 
       // 查找上一轮记忆结晶
-      const prevDistilled = allNodes
-        .filter((n) => n.role === 'distilled' && n.conversationId === deps.conversationId)
-        .sort((a, b) => b.timestamp - a.timestamp)[0];
+      const [prevDistilled] = await deps.queryNodesByConversation(deps.conversationId, {
+        roles: ['distilled'],
+        limit: 1,
+      });
 
       // 扫描蒸馏区间激活的世界书条目
       let distillWbEntries: WorldBookEntry[] = [];
       if (deps.characterA) {
-        distillWbEntries = await scanBoundWorldBooks(deps.characterA, toDistill, deps.maxWorldBookEntries);
+        distillWbEntries = await scanBoundWorldBooks(deps.characterA, batch.nodes, deps.maxWorldBookEntries);
       }
 
       await deps.performDistillation({
-        nodes: toDistill,
+        nodes: batch.nodes,
+        sourceNodeIds: batch.plan.sourceIds,
+        roundStart: (prevDistilled?.distillationMeta?.roundEnd ?? 0) + 1,
+        roundEnd: (prevDistilled?.distillationMeta?.roundEnd ?? 0) + batch.plan.selectedRounds,
         distillModelId: deps.distillModelId,
         distillationPrompt: deps.distillationPrompt,
         tplDistilledNodePrefix: deps.tplDistilledNodePrefix,
         prevDistilledContent: prevDistilled?.content || null,
         activatedWorldBookEntries: distillWbEntries,
         getModelById: deps.getModelById,
-        addMessageNode: deps.addMessageNode,
-        batchUpdateNodes: deps.batchUpdateNodes,
+        commitDistillationBatch: deps.commitDistillationBatch,
       });
-      const updatedNodes = await deps.getNodesByConversation(deps.conversationId);
+      deps.onDistillationComplete?.();
+      const updatedNodes = await deps.queryNodesByConversation(deps.conversationId, { limit: 100 });
       deps.onNodesRefresh(updatedNodes);
     } catch (e: any) {
       setError(e.message || '蒸馏失败');
     }
-  }, [deps]);
+  }, [deps, loadDistillationBatch]);
 
   const abortStream = useCallback(() => {
     abortRef.current?.abort();

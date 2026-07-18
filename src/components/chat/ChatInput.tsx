@@ -9,8 +9,10 @@ interface ChatInputProps {
   charBId: string | null;
   charAName: string | null;
   charBName: string | null;
-  chatModelId: string | null;
-  chatModelName: string | null;
+  charAModelId: string | null;
+  charBModelId: string | null;
+  charAModelName: string | null;
+  charBModelName: string | null;
   thinkingEnabled: boolean;
   onToggleThinking: () => void;
   implantMemoryArmed: boolean;
@@ -27,6 +29,8 @@ interface ChatInputProps {
   onOpenSelector: () => void;
   onError: (msg: string) => void;
   onMutualObserve: () => void;
+  onOpenMemoryCorridor: () => void;
+  onEditDistilled: (nodeId: string, content: string) => Promise<void>;
   isObserving: boolean;
   /** 所有记忆结晶节点，用于记忆回廊展示 */
   distilledNodes: MessageNode[];
@@ -37,8 +41,10 @@ export default function ChatInput({
   charBId,
   charAName,
   charBName,
-  chatModelId,
-  chatModelName,
+  charAModelId,
+  charBModelId,
+  charAModelName,
+  charBModelName,
   thinkingEnabled,
   onToggleThinking,
   implantMemoryArmed,
@@ -56,20 +62,34 @@ export default function ChatInput({
   onError,
   onMutualObserve,
   isObserving,
+  onOpenMemoryCorridor,
+  onEditDistilled,
   distilledNodes,
 }: ChatInputProps) {
   const [text, setText] = useState('');
   const [toolsOpen, setToolsOpen] = useState(false);
   const [memoryCorridorOpen, setMemoryCorridorOpen] = useState(false);
+  const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
+  const [editingContent, setEditingContent] = useState('');
+  const [editError, setEditError] = useState('');
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (!streaming) inputRef.current?.focus();
   }, [streaming]);
 
+  useEffect(() => {
+    if (editingNodeId && !distilledNodes.some((node) => node.id === editingNodeId)) {
+      setEditingNodeId(null);
+      setEditingContent('');
+      setEditError('');
+    }
+  }, [distilledNodes, editingNodeId]);
+
   /** 发送前校验 */
   const validateBeforeSend = (type: 'charA' | 'charB'): string | null => {
-    if (!chatModelId) return '未选择聊天模型，点击右侧 ⚙️ 按钮设置';
+    const modelId = type === 'charA' ? charAModelId : charBModelId;
+    if (!modelId) return `未选择角色${type === 'charA' ? 'A' : 'B'}模型，点击右侧 ⚙️ 按钮设置`;
     if (type === 'charA') {
       if (!charAId) return `角色A 未绑定人物卡，点击右侧 ⚙️ 按钮设置`;
     } else {
@@ -106,12 +126,10 @@ export default function ChatInput({
     }
   };
 
-  // 摘要：角色名 + 模型名
+  // 摘要：角色名 + 各自模型名
   const summary = [
-    charAName || '角色A',
-    charBName ? `/${charBName}` : '',
-    ' | ',
-    chatModelName || '未选模型',
+    `A:${charAName || '角色A'}(${charAModelName || '未选模型'})`,
+    ` | B:${charBName || '角色B'}(${charBModelName || '未选模型'})`,
   ].join('');
 
   return (
@@ -226,7 +244,7 @@ export default function ChatInput({
           <div className="relative group">
             <Button
               onClick={onMutualObserve}
-              disabled={!charAId || !charBId || !chatModelId || streaming || isObserving}
+              disabled={!charAId || !charBId || !charAModelId || !charBModelId || streaming || isObserving}
               loading={isObserving}
               variant="ghost"
               size="sm"
@@ -262,7 +280,10 @@ export default function ChatInput({
             <Icon name="distill" size={14} /> 蒸馏
           </Button>
           <Button
-            onClick={() => setMemoryCorridorOpen(true)}
+            onClick={() => {
+              onOpenMemoryCorridor();
+              setMemoryCorridorOpen(true);
+            }}
             disabled={distilledNodes.length === 0}
             variant="secondary"
             size="sm"
@@ -275,7 +296,12 @@ export default function ChatInput({
       {/* 记忆回廊弹窗 */}
       <Modal
         open={memoryCorridorOpen}
-        onClose={() => setMemoryCorridorOpen(false)}
+        onClose={() => {
+          setMemoryCorridorOpen(false);
+          setEditingNodeId(null);
+          setEditingContent('');
+          setEditError('');
+        }}
         title="📖 记忆回廊"
         maxWidth="max-w-2xl"
       >
@@ -293,7 +319,8 @@ export default function ChatInput({
                   key={node.id}
                   className="bg-slate-800/60 border border-slate-700/40 rounded-lg p-3 space-y-2"
                 >
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
                     <span className="text-[11px] font-mono text-amber-400/70">
                       #{i + 1}
                     </span>
@@ -303,10 +330,53 @@ export default function ChatInput({
                         minute: '2-digit',
                       })}
                     </span>
+                    </div>
+                    {editingNodeId !== node.id && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setEditingNodeId(node.id);
+                          setEditingContent(node.content);
+                          setEditError('');
+                        }}
+                        title="编辑记忆结晶"
+                      >
+                        <Icon name="edit" size={13} />
+                      </Button>
+                    )}
                   </div>
-                  <pre className="text-xs text-slate-300 whitespace-pre-wrap break-words leading-relaxed font-sans">
-                    {node.content}
-                  </pre>
+                  {editingNodeId === node.id ? (
+                    <div className="space-y-2">
+                      <textarea
+                        value={editingContent}
+                        onChange={(event) => setEditingContent(event.target.value)}
+                        rows={8}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 resize-y focus:outline-none focus:border-amber-500/60"
+                      />
+                      {editError && <p className="text-xs text-red-400">{editError}</p>}
+                      <div className="flex justify-end gap-2">
+                        <Button size="sm" variant="ghost" onClick={() => setEditingNodeId(null)}>取消</Button>
+                        <Button
+                          size="sm"
+                          onClick={async () => {
+                            try {
+                              await onEditDistilled(node.id, editingContent);
+                              setEditingNodeId(null);
+                            } catch (error) {
+                              setEditError(error instanceof Error ? error.message : '保存失败');
+                            }
+                          }}
+                        >
+                          保存
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <pre className="text-xs text-slate-300 whitespace-pre-wrap break-words leading-relaxed font-sans">
+                      {node.content}
+                    </pre>
+                  )}
                 </div>
               ))
           )}

@@ -1,12 +1,16 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import type { MessageNode, ModelConfig, DistillationResult, WorldBookEntry } from '../types';
 import { generateId } from '../utils/id';
 import { DEFAULT_DISTILLATION_PROMPT, DEFAULT_TPL_DISTILLED_NODE_PREFIX } from '../utils/constants';
 
 import { apiFetch } from '../utils/apiFetch';
+import { stripReasoningBlocks } from '../utils/responseText';
 
 interface PerformParams {
   nodes: MessageNode[];
+  sourceNodeIds: string[];
+  roundStart: number;
+  roundEnd: number;
   distillModelId: string;
   distillationPrompt: string;
   tplDistilledNodePrefix?: string;
@@ -15,15 +19,13 @@ interface PerformParams {
   /** 蒸馏区间对话中激活的世界书条目 */
   activatedWorldBookEntries?: WorldBookEntry[];
   getModelById: (id: string) => Promise<ModelConfig | undefined>;
-  addMessageNode: (node: MessageNode) => Promise<void>;
-  batchUpdateNodes: (
-    updates: Array<{ id: string; changes: Partial<MessageNode> }>
-  ) => Promise<void>;
+  commitDistillationBatch: (sourceIds: string[], distilledNode: MessageNode) => Promise<boolean>;
 }
 
 export function useDistillation() {
   const [isDistilling, setIsDistilling] = useState(false);
   const [lastResult, setLastResult] = useState<DistillationResult | null>(null);
+  const inFlightRef = useRef(false);
 
   const checkNeeded = (unarchivedCount: number, threshold: number): boolean => {
     return unarchivedCount >= threshold;
@@ -42,6 +44,8 @@ export function useDistillation() {
   }
 
   const performDistillation = useCallback(async (params: PerformParams) => {
+    if (inFlightRef.current) throw new Error('蒸馏任务正在进行中，请等待当前任务完成');
+    inFlightRef.current = true;
     setIsDistilling(true);
     try {
       const model = await params.getModelById(params.distillModelId);
@@ -65,32 +69,34 @@ export function useDistillation() {
 
       const messages: Array<{ role: string; content: string }> = [];
 
-      // 1. 蒸馏提示词（首部）
-      messages.push({ role: 'user', content: basePrompt });
+      const dialogueWithWorldBook = dialogueText + wbText;
+      const hasDialoguePlaceholder = basePrompt.includes('{dialogue}');
+      const promptWithDialogue = basePrompt.split('{dialogue}').join(dialogueWithWorldBook);
 
-      // 2. 上一轮记忆结晶（如有）
+      // 1. 上一轮累计记忆（如有）
       if (params.prevDistilledContent) {
         messages.push({
           role: 'user',
           content:
-            '这是上一轮蒸馏产出的记忆结晶，请在其基础上续写，保持记忆连贯性，不要重复已有内容：\n\n' +
+            '这是上一轮蒸馏产出的累计记忆。请把本批次变化合并进去，输出一份去重后的完整最新记忆；保留仍有效的重要事实，更新已变化的事实：\n\n' +
             params.prevDistilledContent,
         });
       }
 
-      // 3. 需要蒸馏的区间对话 + 激活的世界书内容
-      messages.push({
-        role: 'user',
-        content:
-          '以下是本轮需要蒸馏的对话内容' +
-          (wbText ? '（含区间激活的世界书信息）' : '') +
-          '：\n\n' +
-          dialogueText +
-          wbText,
-      });
+      // 2. 蒸馏提示词；占位符存在时一次性注入对话
+      messages.push({ role: 'user', content: promptWithDialogue });
 
-      // 4. 蒸馏提示词（尾部强化 — 确保输出格式）
-      messages.push({ role: 'user', content: basePrompt });
+      // 3. 未提供占位符时，单独追加对话，兼容旧版自定义提示词
+      if (!hasDialoguePlaceholder) {
+        messages.push({
+          role: 'user',
+          content:
+            '以下是本轮需要蒸馏的完整对话内容' +
+            (wbText ? '（含区间激活的世界书信息）' : '') +
+            '：\n\n' +
+            dialogueWithWorldBook,
+        });
+      }
 
       const resp = await apiFetch(model.baseUrl, {
         method: 'POST',
@@ -108,7 +114,10 @@ export function useDistillation() {
       if (!resp.ok) throw new Error(`蒸馏 API 错误: ${resp.status}`);
 
       const data = await resp.json();
-      const summary = data.choices?.[0]?.message?.content || '蒸馏失败';
+      const responseMessage = data.choices?.[0]?.message || {};
+      const rawResponse = responseMessage.content || data.choices?.[0]?.text || responseMessage.reasoning_content || '';
+      const summary = stripReasoningBlocks(rawResponse).trim();
+      if (!summary) throw new Error('蒸馏模型没有返回有效摘要，原对话未归档');
 
       // ── 记忆结晶尾部粘连世界书条目 ──
       // 格式：记忆结晶正文 + (附带：区间激活的世界书条目表)
@@ -116,7 +125,9 @@ export function useDistillation() {
       const fullSummary = summary + wbAppendix;
 
       const content = (params.tplDistilledNodePrefix || DEFAULT_TPL_DISTILLED_NODE_PREFIX)
-        .replace('{total}', String(sorted.length))
+        .replace('{start}', String(params.roundStart))
+        .replace('{end}', String(params.roundEnd))
+        .replace('{total}', String(params.roundEnd))
         .replace('{summary}', fullSummary);
 
       // 蒸馏是 fire-and-forget 异步触发的，蒸馏过程中用户可能继续发消息。
@@ -133,17 +144,20 @@ export function useDistillation() {
         content,
         isArchived: false,
         timestamp: lastDistilledTs + 1,
+        distillationMeta: {
+          sourceNodeIds: params.sourceNodeIds,
+          roundStart: params.roundStart,
+          roundEnd: params.roundEnd,
+          cumulative: true,
+        },
       };
 
-      await params.addMessageNode(distilledNode);
-
-      await params.batchUpdateNodes(
-        params.nodes.map((n) => ({ id: n.id, changes: { isArchived: true } }))
-      );
+      const committed = await params.commitDistillationBatch(params.sourceNodeIds, distilledNode);
+      if (!committed) throw new Error('蒸馏批次已被其他任务处理，未重复写入');
 
       const result: DistillationResult = {
-        roundStart: 1,
-        roundEnd: sorted.length,
+        roundStart: params.roundStart,
+        roundEnd: params.roundEnd,
         summary: fullSummary,
         nodeId: distilledNode.id,
       };
@@ -153,6 +167,7 @@ export function useDistillation() {
       console.error('蒸馏失败:', e);
       throw e;
     } finally {
+      inFlightRef.current = false;
       setIsDistilling(false);
     }
   }, []);

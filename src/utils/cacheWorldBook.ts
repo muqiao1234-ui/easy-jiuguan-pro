@@ -3,6 +3,9 @@ import { generateId } from './id';
 import { DEFAULT_TPL_CACHE_WORLD_BOOK_PROMPT } from './constants';
 
 export const CACHE_WORLD_BOOK_LIMIT = 10;
+const CACHE_ENTRY_VALUE_LIMIT = 12000;
+const MANUAL_KEY_PROMPT_LIMIT = 200;
+const MANUAL_KEY_PROMPT_CHAR_LIMIT = 4000;
 
 export interface CacheWorldBookOperation {
   op?: 'upsert' | 'delete';
@@ -27,7 +30,7 @@ export function createCacheWorldBook(name: string): WorldBook {
 }
 
 export function normalizeCacheWorldBook(wb: WorldBook): WorldBook {
-  if (wb.kind === 'cache' || wb.entryLimit === CACHE_WORLD_BOOK_LIMIT || wb.name.includes('缓存世界书')) {
+  if (wb.kind === 'cache') {
     return {
       ...wb,
       kind: 'cache',
@@ -40,20 +43,32 @@ export function normalizeCacheWorldBook(wb: WorldBook): WorldBook {
 
 function normalizeKeys(keys: unknown, fallbackKey?: unknown): string[] {
   const raw = Array.isArray(keys) ? keys : keys !== undefined ? [keys] : fallbackKey !== undefined ? [fallbackKey] : [];
-  return raw.map((key) => String(key).trim()).filter(Boolean).slice(0, 6);
+  return raw
+    .filter((key): key is string | number => typeof key === 'string' || typeof key === 'number')
+    .map((key) => String(key).trim())
+    .filter(Boolean)
+    .slice(0, 6);
 }
 
 export function mergeCacheWorldBookEntries(
   current: WorldBookEntry[],
-  operations: CacheWorldBookOperation[]
+  operations: unknown,
+  blockedKeys: Iterable<string> = []
 ): WorldBookEntry[] {
-  let entries = [...current];
+  let entries = Array.isArray(current) ? [...current] : [];
+  if (!Array.isArray(operations)) return entries.slice(0, CACHE_WORLD_BOOK_LIMIT);
+  const blocked = new Set(
+    Array.from(blockedKeys, (key) => key.trim().toLocaleLowerCase()).filter(Boolean)
+  );
 
   for (const operation of operations) {
-    const keys = normalizeKeys(operation.keys, operation.key);
+    if (!operation || typeof operation !== 'object' || Array.isArray(operation)) continue;
+    const candidate = operation as CacheWorldBookOperation;
+    const keys = normalizeKeys(candidate.keys, candidate.key);
     if (keys.length === 0) continue;
 
-    const op = operation.op || 'upsert';
+    const op = candidate.op || 'upsert';
+    if (op !== 'upsert' && op !== 'delete') continue;
     const primaryKey = keys[0].toLowerCase();
     const existingIndex = entries.findIndex((entry) =>
       entry.keys.some((key) => key.toLowerCase() === primaryKey)
@@ -64,10 +79,12 @@ export function mergeCacheWorldBookEntries(
       continue;
     }
 
-    const value = String(operation.value ?? '').trim();
+    if (keys.some((key) => blocked.has(key.toLocaleLowerCase()))) continue;
+    if (typeof candidate.value !== 'string') continue;
+    const value = candidate.value.trim().slice(0, CACHE_ENTRY_VALUE_LIMIT);
     if (!value) continue;
-    const priority = typeof operation.priority === 'number'
-      ? Math.max(1, Math.min(10, Math.floor(operation.priority)))
+    const priority = typeof candidate.priority === 'number' && Number.isFinite(candidate.priority)
+      ? Math.max(1, Math.min(10, Math.floor(candidate.priority)))
       : 5;
     const entry: WorldBookEntry = {
       id: existingIndex !== -1 ? entries[existingIndex].id : generateId(),
@@ -114,10 +131,20 @@ export function buildCacheWorldBookPrompt(
   const cacheEntries = cacheBook.entries
     .map((entry, index) => `${index + 1}. keys=${JSON.stringify(entry.keys)} priority=${entry.priority}\n${entry.value}`)
     .join('\n\n') || '（当前为空）';
-  const manualKeys = manualBook?.entries
-    ?.flatMap((entry) => entry.keys)
-    .filter(Boolean)
-    .join(' / ') || '（无）';
+  const allManualKeys = Array.from(new Set(
+    (manualBook?.entries || []).flatMap((entry) => entry.keys).map((key) => key.trim()).filter(Boolean)
+  ));
+  const selectedManualKeys: string[] = [];
+  let manualKeyChars = 0;
+  for (const key of allManualKeys.slice(0, MANUAL_KEY_PROMPT_LIMIT)) {
+    if (manualKeyChars + key.length > MANUAL_KEY_PROMPT_CHAR_LIMIT) break;
+    selectedManualKeys.push(key);
+    manualKeyChars += key.length;
+  }
+  const omittedCount = allManualKeys.length - selectedManualKeys.length;
+  const manualKeys = selectedManualKeys.length
+    ? `${selectedManualKeys.join(' / ')}${omittedCount > 0 ? ` / （另有 ${omittedCount} 个关键词已省略）` : ''}`
+    : '（无）';
 
   return (template?.trim() || DEFAULT_TPL_CACHE_WORLD_BOOK_PROMPT)
     .split('{limit}').join(String(CACHE_WORLD_BOOK_LIMIT))

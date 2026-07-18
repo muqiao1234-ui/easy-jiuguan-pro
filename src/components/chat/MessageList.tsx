@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useCallback } from 'react';
+import React, { useRef, useEffect, useCallback, useMemo, useState } from 'react';
 import type { MessageNode } from '../../types';
 import MessageBubble from './MessageBubble';
 import DistilledBubble from './DistilledBubble';
@@ -6,6 +6,8 @@ import MarkdownRenderer from './MarkdownRenderer';
 
 interface MessageListProps {
   nodes: MessageNode[];
+  hasMore: boolean;
+  onLoadOlder: () => Promise<void>;
   characterAName: string;
   characterBName: string;
   avatarA: string;
@@ -26,6 +28,8 @@ const SCROLL_THRESHOLD = 80;
 
 export default function MessageList({
   nodes,
+  hasMore,
+  onLoadOlder,
   characterAName,
   characterBName,
   avatarA,
@@ -42,6 +46,8 @@ export default function MessageList({
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
+  const newestNodeIdRef = useRef<string | null>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
 
   const checkIfAtBottom = useCallback(() => {
     const el = containerRef.current;
@@ -62,7 +68,11 @@ export default function MessageList({
   }, []);
 
   useEffect(() => {
-    smartScrollToBottom('smooth');
+    const newestNodeId = nodes[nodes.length - 1]?.id || null;
+    if (newestNodeId !== newestNodeIdRef.current) {
+      newestNodeIdRef.current = newestNodeId;
+      smartScrollToBottom('smooth');
+    }
   }, [nodes, smartScrollToBottom]);
 
   useEffect(() => {
@@ -71,9 +81,25 @@ export default function MessageList({
     }
   }, [streamingContent, smartScrollToBottom]);
 
-  const displayNodes = nodes
+  const displayNodes = useMemo(() => nodes
     .filter((n) => n.role !== 'system' && n.role !== 'scribe')
-    .sort((a, b) => a.timestamp - b.timestamp);
+    .sort((a, b) => a.timestamp - b.timestamp), [nodes]);
+
+  const handleLoadOlder = async () => {
+    const container = containerRef.current;
+    const previousHeight = container?.scrollHeight || 0;
+    const previousTop = container?.scrollTop || 0;
+    setLoadingOlder(true);
+    try {
+      await onLoadOlder();
+      requestAnimationFrame(() => {
+        const nextContainer = containerRef.current;
+        if (nextContainer) nextContainer.scrollTop = previousTop + nextContainer.scrollHeight - previousHeight;
+      });
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
 
   const renderNode = (node: MessageNode) => {
     if (node.role === 'distilled') {
@@ -112,6 +138,18 @@ export default function MessageList({
             <p>选择一个对话开始吧</p>
             <p className="text-xs mt-1">先创建角色和模型，然后创建新对话</p>
           </div>
+        </div>
+      )}
+
+      {hasMore && (
+        <div className="flex justify-center py-2">
+          <button
+            onClick={handleLoadOlder}
+            disabled={loadingOlder}
+            className="text-xs text-slate-500 hover:text-amber-500 disabled:opacity-50 transition-colors"
+          >
+            {loadingOlder ? '正在加载更早消息...' : '加载更早消息'}
+          </button>
         </div>
       )}
 

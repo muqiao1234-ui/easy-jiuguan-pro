@@ -21,6 +21,7 @@ import {
   DEFAULT_TPL_CACHE_WORLD_BOOK_PROMPT,
   DEFAULT_TPL_REVERSE_ENGINEER,
 } from '../../utils/constants';
+import type { MessageNode, MessageRole } from '../../types';
 
 type BackupData = Partial<Record<'models' | 'characters' | 'conversations' | 'conversation_folders' | 'message_nodes' | 'worldbooks' | 'global_states', unknown[]>>;
 
@@ -86,12 +87,23 @@ function normalizeBackupData(raw: unknown): BackupData {
     };
   });
 
-  const messageNodes = assertObjectArray('message_nodes', assertStringRecordArray(raw, 'message_nodes'))?.map((node) => {
+  const validMessageRoles = new Set<MessageRole>(['user', 'charA', 'charB', 'system', 'distilled', 'scribe']);
+  const messageNodes = assertObjectArray('message_nodes', assertStringRecordArray(raw, 'message_nodes'))?.map((node, index) => {
     assertStringField(node, 'id', 'message_nodes');
     assertStringField(node, 'conversationId', 'message_nodes');
     assertStringField(node, 'role', 'message_nodes');
     assertStringField(node, 'content', 'message_nodes');
-    return node;
+    const record = node as Record<string, unknown>;
+    if (!validMessageRoles.has(record.role as MessageRole)) {
+      throw new Error(`message_nodes 包含未知角色: ${String(record.role)}`);
+    }
+    const timestamp = Number(record.timestamp);
+    return {
+      ...record,
+      senderName: typeof record.senderName === 'string' ? record.senderName : '',
+      isArchived: Boolean(record.isArchived),
+      timestamp: Number.isFinite(timestamp) ? timestamp : Date.now() + index,
+    };
   });
 
   const worldbooks = assertObjectArray('worldbooks', assertStringRecordArray(raw, 'worldbooks'))?.map((wb) => {
@@ -116,26 +128,33 @@ function normalizeBackupData(raw: unknown): BackupData {
 async function importBackupData(raw: unknown) {
   const data = normalizeBackupData(raw);
   const db = await import('../../db/index');
+  const Stores = await import('../../db/stores');
   const targets = [
     { key: 'models' as const, store: db.modelsStore, value: data.models },
     { key: 'characters' as const, store: db.charactersStore, value: data.characters },
     { key: 'conversations' as const, store: db.conversationsStore, value: data.conversations },
     { key: 'conversation_folders' as const, store: db.conversationFoldersStore, value: data.conversation_folders },
-    { key: 'message_nodes' as const, store: db.messageNodesStore, value: data.message_nodes },
     { key: 'worldbooks' as const, store: db.worldbooksStore, value: data.worldbooks },
     { key: 'global_states' as const, store: db.globalStatesStore, value: data.global_states },
   ].filter((target) => target.value !== undefined);
 
   const previous: Array<{ store: typeof db.modelsStore; value: unknown }> = [];
+  const previousMessageNodes = data.message_nodes !== undefined
+    ? await Stores.getAllMessageNodes()
+    : undefined;
   try {
     for (const target of targets) {
       previous.push({ store: target.store, value: await target.store.getItem('data') });
       await target.store.setItem('data', target.value);
     }
+    if (data.message_nodes !== undefined) {
+      await Stores.replaceAllMessageNodes(data.message_nodes as MessageNode[]);
+    }
   } catch (err) {
     await Promise.allSettled(
       previous.reverse().map((item) => item.store.setItem('data', item.value))
     );
+    if (previousMessageNodes) await Stores.replaceAllMessageNodes(previousMessageNodes);
     throw new Error(`导入写入失败，已尝试回滚：${err instanceof Error ? err.message : String(err)}`);
   }
 }
@@ -301,7 +320,7 @@ export default function SettingsPanel() {
         <h4 className="text-xs font-semibold text-amber-400 uppercase tracking-wider">记忆蒸馏</h4>
         <div>
           <label className="block text-xs text-slate-900 dark:text-slate-100 mb-1">
-            触发阈值（轮数）: {state.distillationConfig.triggerThreshold}
+            最少完整对话轮数: {state.distillationConfig.triggerThreshold}
           </label>
           <input
             type="range" min={5} max={50} step={5}
@@ -312,7 +331,7 @@ export default function SettingsPanel() {
         </div>
         <div>
           <label className="block text-xs text-slate-900 dark:text-slate-100 mb-1">
-            滑动窗口 · 保留最近: {state.distillationConfig.retainRecentCount} 条
+            滑动窗口 · 保留最近: {state.distillationConfig.retainRecentCount} 轮
           </label>
           <input
             type="range" min={0} max={15} step={1}
@@ -321,7 +340,7 @@ export default function SettingsPanel() {
             className="w-full accent-amber-500"
           />
           <p className="text-[10px] text-slate-700 dark:text-slate-300 mt-1">
-            触发蒸馏时仅浓缩最旧的对话，最近 {state.distillationConfig.retainRecentCount} 条保持原样作为即时上下文。设为 0 则蒸馏全部（旧行为）。
+            只蒸馏最旧的完整对话轮次，最近 {state.distillationConfig.retainRecentCount} 轮保持原样作为即时上下文。
           </p>
         </div>
         <div className="flex items-center justify-between">
@@ -562,7 +581,7 @@ export default function SettingsPanel() {
             const [models, chars, convs, folders, nodes, wbs, states] = await Promise.all([
               stores.getAllModels(), stores.getAllCharacters(), stores.getAllConversations(),
               stores.getAllConversationFolders(),
-              import('../../db/index').then((db) => db.messageNodesStore.getItem('data') || []),
+              stores.getAllMessageNodes(),
               stores.getAllWorldBooks(),
               import('../../db/index').then((db) => db.globalStatesStore.getItem('data') || []),
             ]);
@@ -617,7 +636,7 @@ export default function SettingsPanel() {
                 修改可能导致角色混淆、上下文丢失或其他不可预期的问题。
                 每个模板都支持占位符（如 <code className="text-red-600 dark:text-red-200 bg-red-100 dark:bg-slate-900 px-1 rounded">{'{content}'}</code>、
                 <code className="text-red-600 dark:text-red-200 bg-red-100 dark:bg-slate-900 px-1 rounded">{'{charName}'}</code>），请确保修改后保留必要的占位符。
-                留空则使用默认值。
+                默认提示词已直接写入编辑框，可在原文上直接修改；点击“恢复默认”可还原预设内容。
               </p>
             </div>
             {([
@@ -631,7 +650,7 @@ export default function SettingsPanel() {
               { key: 'tplGalgameCharInjection', label: 'Galgame 角色性格注入', desc: '将角色卡 systemPrompt 包装后注入 Galgame 引擎。占位符：{charPrompt}', defaultVal: DEFAULT_TPL_GALGAME_CHAR_INJECTION, rows: 2 },
               { key: 'tplImplantMemoryPrefix', label: '植入记忆结晶前缀', desc: '一次性植入记忆功能中记忆结晶的前缀。占位符：{content}', defaultVal: DEFAULT_TPL_IMPLANT_MEMORY_PREFIX, rows: 2 },
               { key: 'tplImplantScribePrefix', label: '植入状态书前缀', desc: '一次性植入记忆功能中状态书的前缀。占位符：{content}', defaultVal: DEFAULT_TPL_IMPLANT_SCRIBE_PREFIX, rows: 2 },
-              { key: 'tplDistilledNodePrefix', label: '蒸馏节点生成格式', desc: '蒸馏完成后生成的 distilled 消息节点格式。占位符：{total}, {summary}', defaultVal: DEFAULT_TPL_DISTILLED_NODE_PREFIX, rows: 2 },
+              { key: 'tplDistilledNodePrefix', label: '蒸馏节点生成格式', desc: '蒸馏完成后生成的 distilled 消息节点格式。占位符：{start}, {end}, {total}, {summary}', defaultVal: DEFAULT_TPL_DISTILLED_NODE_PREFIX, rows: 2 },
               { key: 'tplCacheWorldBookPrompt', label: '状态书AI操控<缓存世界书>提示词', desc: '状态书/Galgame 兼任维护<缓存世界书>时追加的功能提示词，要求 AI 在结尾输出 JSON 读写接口。占位符：{limit}, {manualKeys}, {cacheEntries}', defaultVal: DEFAULT_TPL_CACHE_WORLD_BOOK_PROMPT, rows: 12 },
               { key: 'tplReverseEngineer', label: '高级卡逆向提示词', desc: '角色卡逆向功能使用的提示词。将世界书逆向串联为主角色提示词。占位符：{worldBook}, {originalPrompt}', defaultVal: DEFAULT_TPL_REVERSE_ENGINEER, rows: 8 },
             ] as const).map((item) => (
@@ -639,7 +658,7 @@ export default function SettingsPanel() {
                 <div className="flex items-center justify-between">
                   <label className="text-[11px] text-slate-900 dark:text-slate-100 font-medium">{item.label}</label>
                   <button
-                    onClick={() => dispatch({ type: 'SET_ADV_TPL', key: item.key, value: '' })}
+                    onClick={() => dispatch({ type: 'SET_ADV_TPL', key: item.key, value: item.defaultVal })}
                     className="text-[10px] text-slate-900 dark:text-slate-100 hover:text-amber-400"
                   >
                     恢复默认
@@ -651,8 +670,7 @@ export default function SettingsPanel() {
                   onChange={(e) => dispatch({ type: 'SET_ADV_TPL', key: item.key, value: e.target.value })}
                   rows={item.rows}
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-[10px] text-slate-200
- placeholder-slate-500 resize-none focus:outline-none focus:border-red-600/50 font-mono leading-relaxed"
-                  placeholder={item.defaultVal}
+ resize-none focus:outline-none focus:border-red-600/50 font-mono leading-relaxed"
                 />
               </div>
             ))}

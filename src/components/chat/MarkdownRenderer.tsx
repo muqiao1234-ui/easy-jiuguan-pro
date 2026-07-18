@@ -33,7 +33,7 @@ function boldColorClass(role?: 'charA' | 'charB' | 'scribe' | 'user'): string {
  * 轻量 Markdown 渲染组件。
  * 支持 RP 玩家常用的加粗（动作）、斜体（心理描写）、列表等基础语法。
  */
-export default function MarkdownRenderer({
+function MarkdownRenderer({
   content,
   className = '',
   boldColorize = false,
@@ -72,3 +72,5 @@ export default function MarkdownRenderer({
     </div>
   );
 }
+
+export default React.memo(MarkdownRenderer);

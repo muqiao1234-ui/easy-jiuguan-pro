@@ -38,7 +38,7 @@ export default function ModelPing() {
   const [open, setOpen] = useState(false);
 
   return (
-    <div className="rounded-lg border border-slate-700/50 bg-slate-800/50 p-3">
+    <div className="rounded-lg border border-slate-200 bg-white/70 p-3 dark:border-slate-700/50 dark:bg-slate-800/50">
       <button
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center justify-between gap-2 text-left"
@@ -46,34 +46,34 @@ export default function ModelPing() {
         <div className="min-w-0">
           <h4 className="text-xs font-semibold uppercase tracking-wider text-cyan-400">常见模型连接问题</h4>
           {!open && (
-            <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
+            <p className="mt-1 text-[10px] leading-relaxed text-slate-600 dark:text-slate-400">
               400、401、429、CORS、超时等问题速查。Ping 测试按钮在每个模型通道卡片里。
             </p>
           )}
         </div>
-        <Icon name="chevron" size={14} className={`text-slate-400 transition-transform ${open ? '' : '-rotate-90'}`} />
+        <Icon name="chevron" size={14} className={`text-slate-500 dark:text-slate-400 transition-transform ${open ? '' : '-rotate-90'}`} />
       </button>
 
       {open && (
-        <div className="mt-3 space-y-3 text-[11px] leading-relaxed text-slate-300">
+        <div className="mt-3 space-y-3 text-[11px] leading-relaxed text-slate-700 dark:text-slate-300">
           <div className="grid gap-2 md:grid-cols-2">
             {COMMON_ERRORS.map((item) => (
-              <div key={item.code} className="rounded-md border border-slate-700/50 bg-slate-900/50 p-2">
+              <div key={item.code} className="rounded-md border border-slate-200 bg-slate-50 p-2 dark:border-slate-700/50 dark:bg-slate-900/50">
                 <div className="mb-1 flex items-center gap-2">
-                  <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-amber-300">{item.code}</span>
-                  <span className="font-medium text-slate-100">{item.title}</span>
+                  <span className="rounded bg-amber-100 px-1.5 py-0.5 font-mono text-[10px] text-amber-700 dark:bg-slate-800 dark:text-amber-300">{item.code}</span>
+                  <span className="font-medium text-slate-900 dark:text-slate-100">{item.title}</span>
                 </div>
-                <p className="text-slate-400">{item.desc}</p>
+                <p className="text-slate-600 dark:text-slate-400">{item.desc}</p>
               </div>
             ))}
           </div>
 
-          <div className="rounded-md border border-cyan-700/40 bg-cyan-950/20 p-3">
-            <h5 className="mb-1 text-xs font-semibold text-cyan-300">CORS / 跨域问题</h5>
-            <p className="text-slate-300">
+          <div className="rounded-md border border-cyan-200 bg-cyan-50 p-3 dark:border-cyan-700/40 dark:bg-cyan-950/20">
+            <h5 className="mb-1 text-xs font-semibold text-cyan-700 dark:text-cyan-300">CORS / 跨域问题</h5>
+            <p className="text-slate-700 dark:text-slate-300">
               本地版 Easy酒馆Pro 是浏览器直接打开的本地文件。如果 API 服务商不支持跨域，或者本地部署 AI 没有开启跨域，浏览器会拦截请求，界面可能显示 Error/CORS。
             </p>
-            <ol className="mt-2 list-decimal space-y-1 pl-4 text-slate-400">
+            <ol className="mt-2 list-decimal space-y-1 pl-4 text-slate-600 dark:text-slate-400">
               <li>打开服务商的跨域支持，或打开本地模型部署器的跨域支持。</li>
               <li>使用代码等方法，把本地文件部署到本地 HTTP 静态网页后访问。</li>
               <li>使用作者部署在 GitHub Pages 的静态网站，收藏或添加到桌面即可。</li>

@@ -10,7 +10,7 @@ interface DistilledBubbleProps {
   onCopy?: (content: string) => void;
 }
 
-export default function DistilledBubble({ node, onInsert, onCopy }: DistilledBubbleProps) {
+function DistilledBubble({ node, onInsert, onCopy }: DistilledBubbleProps) {
   const handleCopy = () => {
     navigator.clipboard.writeText(node.content).catch(() => {});
     onCopy?.(node.content);
@@ -39,3 +39,5 @@ export default function DistilledBubble({ node, onInsert, onCopy }: DistilledBub
     </div>
   );
 }
+
+export default React.memo(DistilledBubble);

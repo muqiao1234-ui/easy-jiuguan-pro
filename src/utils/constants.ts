@@ -81,7 +81,7 @@ export const DEFAULT_TPL_IMPLANT_MEMORY_PREFIX = '[记忆结晶]\n{content}';
 export const DEFAULT_TPL_IMPLANT_SCRIBE_PREFIX = '[状态书]\n{content}';
 
 /** 蒸馏节点生成格式 — {total} 为总轮数，{summary} 为摘要内容 */
-export const DEFAULT_TPL_DISTILLED_NODE_PREFIX = '📝 记忆 第1轮-第{total}轮：{summary}';
+export const DEFAULT_TPL_DISTILLED_NODE_PREFIX = '📝 记忆 第{start}轮-第{end}轮：{summary}';
 
 /** 状态书 AI 操控缓存世界书提示词 — 由状态书/Galgame 附加注入，要求结尾输出 JSON operations */
 export const DEFAULT_TPL_CACHE_WORLD_BOOK_PROMPT = `你还兼任<缓存世界书>维护员。请扫描本次负责的对话片段中重要的新道具、角色、地点、组织、世界观变化、长期状态变化。

@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import type { Character, MessageNode, SendTarget, WorldBookEntry } from '../../types';
+import type { MessageNodeQuery } from '../../db/stores';
 import { useChat } from '../../hooks/useChat';
 import { useDistillation } from '../../hooks/useDistillation';
 import { useWorldBookScanner } from '../../hooks/useWorldBookScanner';
@@ -36,7 +37,7 @@ export default function ChatArea({
 }: ChatAreaProps) {
   const { state, dispatch } = useApp();
   const { models, loadModels } = useModels();
-  const { nodes, loadNodes, addNode, updateNode, batchUpdateNodes } = useMessageNodes();
+  const { nodes, hasMore, loadNodes, loadOlderNodes, refreshVisibleNodes, addNode, updateNode, batchUpdateNodes } = useMessageNodes();
   const { isDistilling, performDistillation } = useDistillation();
   const { scan } = useWorldBookScanner();
   useGlobalStates();
@@ -49,10 +50,11 @@ export default function ChatArea({
     scribeModelId: null,
     scribeCacheWorldBookEnabled: state.scribeCacheWorldBookEnabled,
   });
-  const [localNodes, setLocalNodes] = React.useState<MessageNode[]>([]);
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [validationError, setValidationError] = useState('');
   const [isObserving, setIsObserving] = useState(false);
+  const [corridorNodes, setCorridorNodes] = useState<MessageNode[]>([]);
+  const corridorRequestRef = React.useRef(0);
 
   // Load per-conversation scribe config (also reload when returning from statebook view)
   useEffect(() => {
@@ -80,7 +82,25 @@ export default function ChatArea({
     if (state.currentConversationId) loadNodes(state.currentConversationId);
   }, [state.currentConversationId, loadNodes]);
 
-  useEffect(() => { setLocalNodes(nodes); }, [nodes]);
+  const refreshDistilledNodes = useCallback(async (conversationId: string | null) => {
+    const requestId = ++corridorRequestRef.current;
+    if (!conversationId) {
+      setCorridorNodes([]);
+      return;
+    }
+    const allDistilled = await import('../../db/stores').then((s) =>
+      s.queryMessageNodesByConversation(conversationId, {
+        roles: ['distilled'],
+        order: 'oldest',
+      })
+    );
+    if (requestId !== corridorRequestRef.current) return;
+    setCorridorNodes(allDistilled);
+  }, []);
+
+  useEffect(() => {
+    refreshDistilledNodes(state.currentConversationId);
+  }, [state.currentConversationId, refreshDistilledNodes]);
 
   const getModelById = useCallback(async (id: string) => {
     const all = await import('../../db/stores').then((s) => s.getAllModels());
@@ -90,6 +110,28 @@ export default function ChatArea({
   const getNodesByConversation = useCallback(async (convId: string) => {
     const all = await import('../../db/stores').then((s) => s.getMessageNodesByConversation(convId));
     return all;
+  }, []);
+
+  const queryNodesByConversation = useCallback(async (convId: string, query: MessageNodeQuery = {}) => {
+    return import('../../db/stores').then((s) => s.queryMessageNodesByConversation(convId, query));
+  }, []);
+
+  const countNodesByConversation = useCallback(
+    async (convId: string, query: Omit<MessageNodeQuery, 'order' | 'limit'> = {}) =>
+      import('../../db/stores').then((s) => s.countMessageNodesByConversation(convId, query)),
+    []
+  );
+
+  const getMessageNodeById = useCallback(async (id: string) => {
+    return import('../../db/stores').then((s) => s.getMessageNodeById(id));
+  }, []);
+
+  const getMessageNodeMetadataByConversation = useCallback(async (convId: string) => {
+    return import('../../db/stores').then((s) => s.getMessageNodeMetadataByConversation(convId));
+  }, []);
+
+  const commitDistillationBatch = useCallback(async (sourceIds: string[], distilledNode: MessageNode) => {
+    return import('../../db/stores').then((s) => s.commitDistillationBatch(sourceIds, distilledNode));
   }, []);
 
   const updateConversation = useCallback(async (id: string, updates: any) => {
@@ -172,6 +214,19 @@ export default function ChatArea({
     if (state.currentConversationId) loadNodes(state.currentConversationId);
   };
 
+  const handleEditDistilled = useCallback(async (nodeId: string, content: string) => {
+    const nextContent = content.trim();
+    if (!nextContent) throw new Error('记忆结晶内容不能为空');
+    const existing = await import('../../db/stores').then((s) => s.getMessageNodeById(nodeId));
+    if (!existing || existing.role !== 'distilled') throw new Error('找不到对应的记忆结晶');
+    await updateNode(nodeId, { content: nextContent });
+    setCorridorNodes((prev) => prev.map((node) => node.id === nodeId ? { ...node, content: nextContent } : node));
+  }, [updateNode]);
+
+  const handleDistillationComplete = useCallback(() => {
+    refreshDistilledNodes(state.currentConversationId);
+  }, [refreshDistilledNodes, state.currentConversationId]);
+
   const handleExportPrompt = (nodeId: string) => {
     const promptData = chat.lastPrompt;
     if (!promptData || promptData.length === 0) {
@@ -179,7 +234,7 @@ export default function ChatArea({
       return;
     }
 
-    const node = localNodes.find((n) => n.id === nodeId);
+    const node = nodes.find((n) => n.id === nodeId);
     const charName = node?.role === 'charA'
       ? (characterA?.name || '角色A')
       : node?.role === 'charB'
@@ -221,9 +276,35 @@ export default function ChatArea({
     }
   };
 
+  // Message bubbles are memoized. Keep their action props stable while delegating to
+  // the latest closures so streaming updates do not re-render every historical bubble.
+  const messageActionRef = React.useRef({
+    retry: handleRetry,
+    deleteNode: handleDelete,
+    edit: handleEdit,
+    exportPrompt: handleExportPrompt,
+  });
+  messageActionRef.current = {
+    retry: handleRetry,
+    deleteNode: handleDelete,
+    edit: handleEdit,
+    exportPrompt: handleExportPrompt,
+  };
+  const stableHandleRetry = useCallback((nodeId: string) => messageActionRef.current.retry(nodeId), []);
+  const stableHandleDelete = useCallback((nodeId: string) => messageActionRef.current.deleteNode(nodeId), []);
+  const stableHandleEdit = useCallback(
+    (nodeId: string, content: string, scribeText?: string, galgameData?: any) =>
+      messageActionRef.current.edit(nodeId, content, scribeText, galgameData),
+    []
+  );
+  const stableHandleExportPrompt = useCallback(
+    (nodeId: string) => messageActionRef.current.exportPrompt(nodeId),
+    []
+  );
+
   const onNodesRefresh = useCallback((newNodes: MessageNode[]) => {
-    setLocalNodes(newNodes);
-  }, []);
+    refreshVisibleNodes(newNodes);
+  }, [refreshVisibleNodes]);
 
   // useMemo 稳定 deps 引用：只有字段值变化时才产生新对象，
   // 避免 ChatArea 每帧构造新对象导致 useChat 内所有 useCallback 整链重建。
@@ -231,7 +312,8 @@ export default function ChatArea({
     conversationId: state.currentConversationId,
     characterA,
     characterB,
-    chatModelId: state.currentChatModelId,
+    charAModelId: state.currentCharAModelId,
+    charBModelId: state.currentCharBModelId,
     distillModelId: state.currentDistillModelId,
     scribeModelId: localScribeConfig.scribeModelId || state.currentScribeModelId,
     scribeEnabled: localScribeConfig.scribeEnabled,
@@ -254,11 +336,16 @@ export default function ChatArea({
     addMessageNode: addNode,
     updateMessageNode: updateNode,
     batchUpdateNodes,
-    getNodesByConversation,
+    queryNodesByConversation,
+    countNodesByConversation,
+    getMessageNodeById,
+    getMessageNodeMetadataByConversation,
+    commitDistillationBatch,
     scanWorldBook: scan,
     performDistillation: performDistillation as any,
     updateConversation,
     onNodesRefresh,
+    onDistillationComplete: handleDistillationComplete,
     // 高级提示词模板
     tplUserWrapper: state.tplUserWrapper,
     tplOtherCharWrapper: state.tplOtherCharWrapper,
@@ -276,7 +363,8 @@ export default function ChatArea({
     state.currentConversationId,
     characterA,
     characterB,
-    state.currentChatModelId,
+    state.currentCharAModelId,
+    state.currentCharBModelId,
     state.currentDistillModelId,
     localScribeConfig.scribeModelId,
     localScribeConfig.scribeEnabled,
@@ -305,29 +393,37 @@ export default function ChatArea({
     addNode,
     updateNode,
     batchUpdateNodes,
-    getNodesByConversation,
+    queryNodesByConversation,
+    countNodesByConversation,
+    getMessageNodeById,
+    getMessageNodeMetadataByConversation,
+    commitDistillationBatch,
     scan,
     performDistillation,
     updateConversation,
     onNodesRefresh,
+    handleDistillationComplete,
   ]);
 
   const chat = useChat(chatDeps);
 
   /**
-   * 双角色互相认识：用主AI分别观察对方角色卡，提取外部可观察特征
+   * 双角色互相认识：分别由角色 A/B 绑定模型观察对方角色卡，提取外部可观察特征
    * 生成两条世界书条目，分别插入对应角色的世界书中
    */
   const handleMutualObserve = useCallback(async () => {
-    if (!characterA || !characterB || !state.currentChatModelId) {
-      setValidationError('请先选择角色A、角色B和聊天模型');
+    if (!characterA || !characterB || !state.currentCharAModelId || !state.currentCharBModelId) {
+      setValidationError('请先选择角色A、角色B及各自绑定的模型');
       return;
     }
     setIsObserving(true);
     try {
       const Stores = await import('../../db/stores');
-      const model = await Stores.getModelById(state.currentChatModelId);
-      if (!model) throw new Error('聊天模型未找到');
+      const [modelA, modelB] = await Promise.all([
+        Stores.getModelById(state.currentCharAModelId),
+        Stores.getModelById(state.currentCharBModelId),
+      ]);
+      if (!modelA || !modelB) throw new Error('角色绑定模型未找到');
 
       // AI 观察提示词：使用用户自定义或默认
       const observeTemplate = state.mutualObservePrompt || DEFAULT_MUTUAL_OBSERVE_PROMPT;
@@ -335,11 +431,11 @@ export default function ChatArea({
         observeTemplate.replace('{charPrompt}', charPrompt);
 
       // 串行发起两个观察请求（智谱等限速严格的 API 会因并发 429）
-      const obsB_forA = await apiFetch(model.baseUrl, {
+      const obsB_forA = await apiFetch(modelA.baseUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${model.apiKey}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${modelA.apiKey}` },
         body: JSON.stringify({
-          model: model.defaultModel,
+          model: modelA.defaultModel,
           messages: [{ role: 'user', content: OBSERVE_PROMPT(characterB.systemPrompt) }],
           stream: false, temperature: 0.3, max_tokens: 200,
         }),
@@ -354,11 +450,11 @@ export default function ChatArea({
          || ''
         ).trim()
       );
-      const obsA_forB = await apiFetch(model.baseUrl, {
+      const obsA_forB = await apiFetch(modelB.baseUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${model.apiKey}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${modelB.apiKey}` },
         body: JSON.stringify({
-          model: model.defaultModel,
+          model: modelB.defaultModel,
           messages: [{ role: 'user', content: OBSERVE_PROMPT(characterA.systemPrompt) }],
           stream: false, temperature: 0.3, max_tokens: 200,
         }),
@@ -436,7 +532,7 @@ export default function ChatArea({
     } finally {
       setIsObserving(false);
     }
-  }, [characterA, characterB, state.currentChatModelId, state.mutualObservePrompt]);
+  }, [characterA, characterB, state.currentCharAModelId, state.currentCharBModelId, state.mutualObservePrompt]);
 
   // 合并错误：chat.error 和 validationError
   const activeError = validationError || chat.error || '';
@@ -444,7 +540,12 @@ export default function ChatArea({
   return (
     <div className="flex-1 flex flex-col overflow-hidden relative">
       <MessageList
-        nodes={localNodes}
+        nodes={nodes}
+        hasMore={hasMore}
+        onLoadOlder={() => {
+          if (state.currentConversationId) return loadOlderNodes(state.currentConversationId);
+          return Promise.resolve();
+        }}
         characterAName={characterA?.name || '角色A'}
         characterBName={characterB?.name || '角色B'}
         avatarA={characterA?.avatar || '🤖'}
@@ -452,11 +553,11 @@ export default function ChatArea({
         streamingContent={chat.streamingContent}
         streamingTarget={chat.streamingTarget?.type || ''}
         onBranch={onBranch}
-        onRetry={handleRetry}
-        onDelete={handleDelete}
-        onEdit={handleEdit}
+        onRetry={stableHandleRetry}
+        onDelete={stableHandleDelete}
+        onEdit={stableHandleEdit}
         debugMode={state.debugMode}
-        onExportPrompt={handleExportPrompt}
+        onExportPrompt={stableHandleExportPrompt}
         boldColorize={state.boldColorize}
       />
 
@@ -492,8 +593,10 @@ export default function ChatArea({
         charBId={characterB?.id || null}
         charAName={characterA?.name || null}
         charBName={characterB?.name || null}
-        chatModelId={state.currentChatModelId}
-        chatModelName={models.find((m) => m.id === state.currentChatModelId)?.name || null}
+        charAModelId={state.currentCharAModelId}
+        charBModelId={state.currentCharBModelId}
+        charAModelName={models.find((m) => m.id === state.currentCharAModelId)?.name || null}
+        charBModelName={models.find((m) => m.id === state.currentCharBModelId)?.name || null}
         thinkingEnabled={state.thinkingEnabled}
         onToggleThinking={() => dispatch({ type: 'TOGGLE_THINKING' })}
         implantMemoryArmed={chat.implantMemoryArmed}
@@ -517,7 +620,9 @@ export default function ChatArea({
         onError={setValidationError}
         onMutualObserve={handleMutualObserve}
         isObserving={isObserving}
-        distilledNodes={localNodes.filter((n) => n.role === 'distilled')}
+        onOpenMemoryCorridor={() => refreshDistilledNodes(state.currentConversationId)}
+        onEditDistilled={handleEditDistilled}
+        distilledNodes={corridorNodes}
       />
 
       {/* 角色 & 模型选择弹窗 */}
@@ -536,10 +641,10 @@ export default function ChatArea({
           />
           <ModelSelector
             models={models}
-            chatModelId={state.currentChatModelId}
-            distillModelId={state.currentDistillModelId}
-            onChatModelChange={(id) => dispatch({ type: 'SET_CHAT_MODEL', id })}
-            onDistillModelChange={(id) => dispatch({ type: 'SET_DISTILL_MODEL', id })}
+            charAModelId={state.currentCharAModelId}
+            charBModelId={state.currentCharBModelId}
+            onCharAModelChange={(id) => dispatch({ type: 'SET_CHAR_A_MODEL', id })}
+            onCharBModelChange={(id) => dispatch({ type: 'SET_CHAR_B_MODEL', id })}
           />
           <div className="flex justify-end">
             <Button onClick={() => setSelectorOpen(false)}>完成</Button>

@@ -82,7 +82,7 @@ export default function WorldBookManager() {
   useEffect(() => { loadWorldBooks(); }, [loadWorldBooks]);
 
   const isCacheWorldBook = (wb: WorldBook) =>
-    wb.kind === 'cache' || wb.entryLimit === CACHE_WORLD_BOOK_LIMIT || wb.name.includes('缓存世界书');
+    wb.kind === 'cache';
 
   const manualWorldBooks = worldbooks.filter((wb) => !isCacheWorldBook(wb));
   const cacheWorldBooks = worldbooks.filter(isCacheWorldBook);
@@ -176,8 +176,15 @@ export default function WorldBookManager() {
         cleanRaw = fenceMatch[1].trim();
       }
       const parsedValue = JSON.parse(cleanRaw) as JsonEntry[] | JsonPatch;
-      if (isCache && targetBook && !Array.isArray(parsedValue) && Array.isArray(parsedValue.operations)) {
-        const entries = mergeCacheWorldBookEntries(targetBook.entries, parsedValue.operations as any);
+      if (
+        isCache &&
+        targetBook &&
+        parsedValue !== null &&
+        !Array.isArray(parsedValue) &&
+        typeof parsedValue === 'object' &&
+        Array.isArray(parsedValue.operations)
+      ) {
+        const entries = mergeCacheWorldBookEntries(targetBook.entries, parsedValue.operations);
         await Stores.updateWorldBook(wbId, {
           kind: 'cache',
           entryLimit: CACHE_WORLD_BOOK_LIMIT,
@@ -200,6 +207,10 @@ export default function WorldBookManager() {
     let skipped = 0;
 
     for (const item of parsed) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        skipped++;
+        continue;
+      }
       if (!item.keys || !item.value) {
         skipped++;
         continue;

@@ -30,6 +30,9 @@ export default function TopBar({ onOpenSettings }: TopBarProps) {
             className="h-8 w-8 rounded-lg object-cover shadow-sm"
           />
           <span>Easy酒馆Pro</span>
+          <span className="rounded border border-amber-400/40 bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">
+            v1.2 公测版
+          </span>
         </h1>
       </div>
 

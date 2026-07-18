@@ -1,23 +1,58 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import type { MessageNode, Conversation } from '../types';
 import * as Stores from '../db/stores';
 import { generateId } from '../utils/id';
 
 export function useMessageNodes() {
   const [nodes, setNodes] = useState<MessageNode[]>([]);
+  const [hasMore, setHasMore] = useState(false);
+  const activeConversationRef = useRef<string | null>(null);
+  const loadRequestRef = useRef(0);
 
   const loadNodes = useCallback(async (conversationId: string) => {
+    const requestId = ++loadRequestRef.current;
     try {
-      const data = await Stores.getMessageNodesByConversation(conversationId);
-      setNodes(data);
+      const page = await Stores.getMessageNodesPageByConversation(conversationId);
+      if (requestId !== loadRequestRef.current) return;
+      activeConversationRef.current = conversationId;
+      setNodes(page.nodes);
+      setHasMore(page.hasMore);
     } catch (e) {
       console.error('loadNodes failed:', e);
     }
   }, []);
 
+  const loadOlderNodes = useCallback(async (conversationId: string) => {
+    if (!hasMore || activeConversationRef.current !== conversationId) return;
+    const oldest = nodes[0];
+    if (!oldest) return;
+    const page = await Stores.getMessageNodesPageByConversation(conversationId, {
+      timestamp: oldest.timestamp,
+      id: oldest.id,
+    });
+    if (activeConversationRef.current !== conversationId) return;
+    setNodes((prev) => [...page.nodes, ...prev]);
+    setHasMore(page.hasMore);
+  }, [hasMore, nodes]);
+
+  /** Updates the currently visible window without reintroducing the full conversation into React state. */
+  const refreshVisibleNodes = useCallback((allNodes: MessageNode[]) => {
+    setNodes((prev) => {
+      if (prev.length === 0) return prev;
+      const byId = new Map(allNodes.map((node) => [node.id, node]));
+      const knownIds = new Set(prev.map((node) => node.id));
+      const newestVisibleTimestamp = prev[prev.length - 1]?.timestamp ?? 0;
+      const appended = allNodes.filter((node) => !knownIds.has(node.id) && node.timestamp >= newestVisibleTimestamp);
+      return [...prev.map((node) => byId.get(node.id) || node), ...appended]
+        .sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id));
+    });
+  }, []);
+
   const addNode = useCallback(async (node: MessageNode) => {
     await Stores.addMessageNode(node);
-    setNodes((prev) => [...prev, node]);
+    if (activeConversationRef.current === node.conversationId) {
+      setNodes((prev) => [...prev, node]);
+    }
   }, []);
 
   const updateNode = useCallback(async (id: string, updates: Partial<MessageNode>) => {
@@ -28,10 +63,11 @@ export function useMessageNodes() {
   const batchUpdateNodes = useCallback(
     async (updates: Array<{ id: string; changes: Partial<MessageNode> }>) => {
       await Stores.updateMessageNodes(updates);
+      const changesById = new Map(updates.map((update) => [update.id, update.changes]));
       setNodes((prev) =>
-        prev.map((n) => {
-          const u = updates.find((x) => x.id === n.id);
-          return u ? { ...n, ...u.changes } : n;
+        prev.map((node) => {
+          const changes = changesById.get(node.id);
+          return changes ? { ...node, ...changes } : node;
         })
       );
     },
@@ -106,7 +142,10 @@ export function useMessageNodes() {
 
   return {
     nodes,
+    hasMore,
     loadNodes,
+    loadOlderNodes,
+    refreshVisibleNodes,
     addNode,
     updateNode,
     batchUpdateNodes,

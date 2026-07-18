@@ -1,13 +1,33 @@
-import React, { createContext, useContext, useReducer, useEffect } from 'react';
+import React, { createContext, useContext, useReducer, useEffect, useState } from 'react';
 import type { AppState, AppAction } from '../types';
-import { DEFAULT_DISTILLATION_CONFIG, DEFAULT_CONTEXT_CONFIG, DEFAULT_SCRIBE_TRIGGER_INTERVAL, DEFAULT_SCRIBE_ROUNDS, SCRIBE_SYSTEM_PROMPT } from '../utils/constants';
+import {
+  DEFAULT_DISTILLATION_CONFIG,
+  DEFAULT_CONTEXT_CONFIG,
+  DEFAULT_SCRIBE_TRIGGER_INTERVAL,
+  DEFAULT_SCRIBE_ROUNDS,
+  SCRIBE_SYSTEM_PROMPT,
+  DEFAULT_TPL_USER_WRAPPER,
+  DEFAULT_TPL_OTHER_CHAR_WRAPPER,
+  DEFAULT_TPL_IDENTITY_ANCHOR,
+  DEFAULT_TPL_WORLD_BOOK_PREFIX,
+  DEFAULT_TPL_DISTILLED_PREFIX,
+  DEFAULT_TPL_STATE_BOOK_PREFIX,
+  DEFAULT_TPL_EAVESDROP_APPEND,
+  DEFAULT_TPL_GALGAME_CHAR_INJECTION,
+  DEFAULT_TPL_IMPLANT_MEMORY_PREFIX,
+  DEFAULT_TPL_IMPLANT_SCRIBE_PREFIX,
+  DEFAULT_TPL_DISTILLED_NODE_PREFIX,
+  DEFAULT_TPL_CACHE_WORLD_BOOK_PROMPT,
+  DEFAULT_TPL_REVERSE_ENGINEER,
+} from '../utils/constants';
 import { setLowRateMode } from '../utils/apiFetch';
 import * as Stores from '../db/stores';
 
 const initialState: AppState = {
   activeView: 'conversations',
   currentConversationId: null,
-  currentChatModelId: null,
+  currentCharAModelId: null,
+  currentCharBModelId: null,
   currentDistillModelId: null,
   currentScribeModelId: null,
   isMobile: false,
@@ -34,19 +54,35 @@ const initialState: AppState = {
   lowRateMode: false,
   distillationConfig: { ...DEFAULT_DISTILLATION_CONFIG },
   contextConfig: { ...DEFAULT_CONTEXT_CONFIG },
-  tplUserWrapper: '',
-  tplOtherCharWrapper: '',
-  tplIdentityAnchor: '',
-  tplWorldBookPrefix: '',
-  tplDistilledPrefix: '',
-  tplStateBookPrefix: '',
-  tplEavesdropAppend: '',
-  tplGalgameCharInjection: '',
-  tplImplantMemoryPrefix: '',
-  tplImplantScribePrefix: '',
-  tplDistilledNodePrefix: '',
-  tplCacheWorldBookPrompt: '',
-  tplReverseEngineer: '',
+  tplUserWrapper: DEFAULT_TPL_USER_WRAPPER,
+  tplOtherCharWrapper: DEFAULT_TPL_OTHER_CHAR_WRAPPER,
+  tplIdentityAnchor: DEFAULT_TPL_IDENTITY_ANCHOR,
+  tplWorldBookPrefix: DEFAULT_TPL_WORLD_BOOK_PREFIX,
+  tplDistilledPrefix: DEFAULT_TPL_DISTILLED_PREFIX,
+  tplStateBookPrefix: DEFAULT_TPL_STATE_BOOK_PREFIX,
+  tplEavesdropAppend: DEFAULT_TPL_EAVESDROP_APPEND,
+  tplGalgameCharInjection: DEFAULT_TPL_GALGAME_CHAR_INJECTION,
+  tplImplantMemoryPrefix: DEFAULT_TPL_IMPLANT_MEMORY_PREFIX,
+  tplImplantScribePrefix: DEFAULT_TPL_IMPLANT_SCRIBE_PREFIX,
+  tplDistilledNodePrefix: DEFAULT_TPL_DISTILLED_NODE_PREFIX,
+  tplCacheWorldBookPrompt: DEFAULT_TPL_CACHE_WORLD_BOOK_PROMPT,
+  tplReverseEngineer: DEFAULT_TPL_REVERSE_ENGINEER,
+};
+
+const advancedTemplateDefaults: Record<string, string> = {
+  tplUserWrapper: DEFAULT_TPL_USER_WRAPPER,
+  tplOtherCharWrapper: DEFAULT_TPL_OTHER_CHAR_WRAPPER,
+  tplIdentityAnchor: DEFAULT_TPL_IDENTITY_ANCHOR,
+  tplWorldBookPrefix: DEFAULT_TPL_WORLD_BOOK_PREFIX,
+  tplDistilledPrefix: DEFAULT_TPL_DISTILLED_PREFIX,
+  tplStateBookPrefix: DEFAULT_TPL_STATE_BOOK_PREFIX,
+  tplEavesdropAppend: DEFAULT_TPL_EAVESDROP_APPEND,
+  tplGalgameCharInjection: DEFAULT_TPL_GALGAME_CHAR_INJECTION,
+  tplImplantMemoryPrefix: DEFAULT_TPL_IMPLANT_MEMORY_PREFIX,
+  tplImplantScribePrefix: DEFAULT_TPL_IMPLANT_SCRIBE_PREFIX,
+  tplDistilledNodePrefix: DEFAULT_TPL_DISTILLED_NODE_PREFIX,
+  tplCacheWorldBookPrompt: DEFAULT_TPL_CACHE_WORLD_BOOK_PROMPT,
+  tplReverseEngineer: DEFAULT_TPL_REVERSE_ENGINEER,
 };
 
 function appReducer(state: AppState, action: AppAction): AppState {
@@ -70,8 +106,10 @@ function appReducer(state: AppState, action: AppAction): AppState {
         currentConversationId: action.id,
         sidebarOpen: state.isMobile ? false : state.sidebarOpen,
       };
-    case 'SET_CHAT_MODEL':
-      return { ...state, currentChatModelId: action.id };
+    case 'SET_CHAR_A_MODEL':
+      return { ...state, currentCharAModelId: action.id };
+    case 'SET_CHAR_B_MODEL':
+      return { ...state, currentCharBModelId: action.id };
     case 'SET_DISTILL_MODEL':
       return { ...state, currentDistillModelId: action.id };
     case 'SET_SCRIBE_MODEL':
@@ -150,6 +188,7 @@ interface PersistedUISettings {
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(appReducer, initialState);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
 
   // 移动端检测
   useEffect(() => {
@@ -172,6 +211,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (settings.scribeMode) dispatch({ type: 'SET_SCRIBE_MODE', mode: settings.scribeMode });
         if (settings.galgamePrompt !== undefined) dispatch({ type: 'SET_GALGAME_PROMPT', prompt: settings.galgamePrompt });
         if (settings.mutualObservePrompt !== undefined) dispatch({ type: 'SET_MUTUAL_OBSERVE_PROMPT', prompt: settings.mutualObservePrompt });
+        if (settings.charAModelId !== undefined) dispatch({ type: 'SET_CHAR_A_MODEL', id: settings.charAModelId });
+        if (settings.charBModelId !== undefined) dispatch({ type: 'SET_CHAR_B_MODEL', id: settings.charBModelId });
         // 高级提示词模板
         const advKeys = [
           'tplUserWrapper', 'tplOtherCharWrapper', 'tplIdentityAnchor',
@@ -181,7 +222,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           'tplCacheWorldBookPrompt', 'tplReverseEngineer',
         ];
         for (const k of advKeys) {
-          if ((settings as any)[k] !== undefined) dispatch({ type: 'SET_ADV_TPL', key: k, value: (settings as any)[k] });
+          const savedValue = (settings as any)[k];
+          // Older installations persisted empty strings and showed the defaults as grey placeholders.
+          dispatch({ type: 'SET_ADV_TPL', key: k, value: savedValue || advancedTemplateDefaults[k] });
         }
         if (settings.thinkingEnabled !== undefined) {
           // 直接设置而非 toggle
@@ -206,7 +249,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (settings.lowRateMode !== undefined) {
           dispatch({ type: 'SET_LOW_RATE_MODE', enabled: settings.lowRateMode });
         }
+        if (settings.distillationConfig) {
+          dispatch({ type: 'UPDATE_DISTILLATION_CONFIG', config: settings.distillationConfig });
+        }
+        if (settings.contextConfig) {
+          dispatch({ type: 'UPDATE_CONTEXT_CONFIG', config: settings.contextConfig });
+        }
       }
+      setSettingsLoaded(true);
+    }).catch(() => {
+      setSettingsLoaded(true);
     });
   }, []);
 
@@ -222,6 +274,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // 持久化所有 UI 设置到 IndexedDB
   useEffect(() => {
+    if (!settingsLoaded) return;
+
     Stores.setUISettings({
       theme: state.theme,
       wallpaper: state.wallpaper,
@@ -230,6 +284,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       scribeMode: state.scribeMode,
       galgamePrompt: state.galgamePrompt,
       mutualObservePrompt: state.mutualObservePrompt,
+      charAModelId: state.currentCharAModelId,
+      charBModelId: state.currentCharBModelId,
       tplUserWrapper: state.tplUserWrapper,
       tplOtherCharWrapper: state.tplOtherCharWrapper,
       tplIdentityAnchor: state.tplIdentityAnchor,
@@ -249,13 +305,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       scribeCacheWorldBookEnabled: state.scribeCacheWorldBookEnabled,
       scribeRounds: state.scribeRounds,
       lowRateMode: state.lowRateMode,
+      distillationConfig: state.distillationConfig,
+      contextConfig: state.contextConfig,
     });
   }, [state.theme, state.wallpaper, state.boldColorize, state.scribeEngine, state.scribeMode, state.galgamePrompt, state.mutualObservePrompt,
+    state.currentCharAModelId, state.currentCharBModelId,
     state.tplUserWrapper, state.tplOtherCharWrapper, state.tplIdentityAnchor, state.tplWorldBookPrefix,
     state.tplDistilledPrefix, state.tplStateBookPrefix, state.tplEavesdropAppend, state.tplGalgameCharInjection,
     state.tplImplantMemoryPrefix, state.tplImplantScribePrefix, state.tplDistilledNodePrefix,
     state.tplCacheWorldBookPrompt, state.tplReverseEngineer,
-    state.thinkingEnabled, state.debugMode, state.scribeEnabled, state.scribeCacheWorldBookEnabled, state.scribeRounds, state.lowRateMode]);
+    state.thinkingEnabled, state.debugMode, state.scribeEnabled, state.scribeCacheWorldBookEnabled, state.scribeRounds, state.lowRateMode,
+    state.distillationConfig, state.contextConfig,
+    settingsLoaded]);
 
   // 低速率模式变化时同步到 apiFetch 模块
   useEffect(() => {

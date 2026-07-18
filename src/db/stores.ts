@@ -15,6 +15,9 @@ import type {
   Conversation,
   ConversationFolder,
   MessageNode,
+  MessageRole,
+  DistillationConfig,
+  ContextAssemblyConfig,
   WorldBook,
   GlobalState,
 } from '../types';
@@ -249,33 +252,290 @@ export async function deleteConversationFolder(id: string): Promise<void> {
 
 /* ──────────────── Message Nodes ──────────────── */
 
+const MESSAGE_NODE_VERSION_KEY = '__message_nodes_v3__';
+const MESSAGE_NODE_INDEX_PREFIX = 'conversation_index:';
+const MESSAGE_NODE_PREFIX = 'node:';
+let messageNodeMigration: Promise<void> | null = null;
+
+interface MessageNodeIndexItem {
+  id: string;
+  timestamp: number;
+  role: MessageRole;
+  isArchived: boolean;
+  hasScribeUpdate: boolean;
+}
+
+function toMessageNodeIndexItem(node: MessageNode): MessageNodeIndexItem {
+  return {
+    id: node.id,
+    timestamp: Number.isFinite(node.timestamp) ? node.timestamp : 0,
+    role: node.role,
+    isArchived: Boolean(node.isArchived),
+    hasScribeUpdate: Boolean(node.scribeUpdate?.isEnabled && node.scribeUpdate.rawText?.trim()),
+  };
+}
+
+function messageNodeIndexKey(conversationId: string): string {
+  return `${MESSAGE_NODE_INDEX_PREFIX}${conversationId}`;
+}
+
+function messageNodeKey(id: string): string {
+  return `${MESSAGE_NODE_PREFIX}${id}`;
+}
+
+function sortMessageNodeIndex(items: MessageNodeIndexItem[]): MessageNodeIndexItem[] {
+  return items.sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id));
+}
+
+/** Rebuilds metadata indexes from either the old array store or v2 per-node records. */
+async function ensureMessageNodesV3(): Promise<void> {
+  if (!messageNodeMigration) {
+    messageNodeMigration = withStoreLock(messageNodesStore, async () => {
+      if (await messageNodesStore.getItem<boolean>(MESSAGE_NODE_VERSION_KEY)) return;
+
+      const nodesById = new Map<string, MessageNode>();
+      const indexKeys: string[] = [];
+      await messageNodesStore.iterate<unknown, void>((value, key) => {
+        if (key.startsWith(MESSAGE_NODE_PREFIX) && value && typeof value === 'object') {
+          const node = value as MessageNode;
+          if (node.id && node.conversationId) nodesById.set(node.id, node);
+        } else if (key.startsWith(MESSAGE_NODE_INDEX_PREFIX)) {
+          indexKeys.push(key);
+        }
+      });
+      const legacyNodes = await getStoreData<MessageNode>(messageNodesStore);
+      for (const node of legacyNodes) {
+        if (node?.id && node.conversationId) nodesById.set(node.id, node);
+      }
+      const byConversation = new Map<string, MessageNode[]>();
+      for (const node of nodesById.values()) {
+        const nodes = byConversation.get(node.conversationId) || [];
+        nodes.push(node);
+        byConversation.set(node.conversationId, nodes);
+      }
+
+      for (const nodes of byConversation.values()) {
+        await Promise.all(nodes.map((node) => messageNodesStore.setItem(messageNodeKey(node.id), node)));
+      }
+
+      await Promise.all(indexKeys.map((key) => messageNodesStore.removeItem(key)));
+      for (const [conversationId, nodes] of byConversation) {
+        await messageNodesStore.setItem(
+          messageNodeIndexKey(conversationId),
+          sortMessageNodeIndex(nodes.map(toMessageNodeIndexItem))
+        );
+      }
+      await messageNodesStore.removeItem('data');
+      await messageNodesStore.setItem(MESSAGE_NODE_VERSION_KEY, true);
+    });
+  }
+  const migration = messageNodeMigration;
+  try {
+    await migration;
+  } catch (error) {
+    if (messageNodeMigration === migration) messageNodeMigration = null;
+    throw error;
+  }
+}
+
+async function getMessageNodeIndex(conversationId: string): Promise<MessageNodeIndexItem[]> {
+  await ensureMessageNodesV3();
+  const items = await messageNodesStore.getItem<MessageNodeIndexItem[]>(messageNodeIndexKey(conversationId));
+  return Array.isArray(items) ? items : [];
+}
+
+export interface MessageNodePage {
+  nodes: MessageNode[];
+  hasMore: boolean;
+}
+
+export interface MessageNodeCursor {
+  timestamp: number;
+  id: string;
+}
+
+export async function getMessageNodesPageByConversation(
+  conversationId: string,
+  before?: MessageNodeCursor,
+  limit = 80
+): Promise<MessageNodePage> {
+  const index = await getMessageNodeIndex(conversationId);
+  const candidates = before === undefined
+    ? index
+    : index.filter((item) =>
+        item.timestamp < before.timestamp ||
+        (item.timestamp === before.timestamp && item.id.localeCompare(before.id) < 0)
+      );
+  const safeLimit = Math.max(1, Math.min(500, Math.floor(limit) || 80));
+  const selected = candidates.slice(Math.max(0, candidates.length - safeLimit));
+  const loaded = await Promise.all(selected.map((item) => messageNodesStore.getItem<MessageNode>(messageNodeKey(item.id))));
+  return {
+    nodes: loaded.filter((node): node is MessageNode => !!node),
+    hasMore: candidates.length > selected.length,
+  };
+}
+
 export async function getMessageNodesByConversation(
   conversationId: string
 ): Promise<MessageNode[]> {
-  const all = await getStoreData<MessageNode>(messageNodesStore);
-  return all.filter((n) => n.conversationId === conversationId);
+  const index = await getMessageNodeIndex(conversationId);
+  const nodes = await Promise.all(index.map((item) => messageNodesStore.getItem<MessageNode>(messageNodeKey(item.id))));
+  return nodes.filter((node): node is MessageNode => !!node);
+}
+
+export interface MessageNodeQuery {
+  roles?: MessageRole[];
+  isArchived?: boolean;
+  hasScribeUpdate?: boolean;
+  order?: 'oldest' | 'newest';
+  limit?: number;
+}
+
+function filterMessageNodeIndex(index: MessageNodeIndexItem[], query: MessageNodeQuery): MessageNodeIndexItem[] {
+  const roles = query.roles?.length ? new Set(query.roles) : null;
+  return index.filter((item) =>
+    (!roles || roles.has(item.role)) &&
+    (query.isArchived === undefined || item.isArchived === query.isArchived) &&
+    (query.hasScribeUpdate === undefined || item.hasScribeUpdate === query.hasScribeUpdate)
+  );
+}
+
+export async function queryMessageNodesByConversation(
+  conversationId: string,
+  query: MessageNodeQuery = {}
+): Promise<MessageNode[]> {
+  const index = filterMessageNodeIndex(await getMessageNodeIndex(conversationId), query);
+  const limit = query.limit === undefined
+    ? index.length
+    : Math.max(0, Math.min(2000, Math.floor(query.limit) || 0));
+  const selected = limit === 0
+    ? []
+    : query.order === 'oldest' ? index.slice(0, limit) : index.slice(-limit);
+  const nodes = await Promise.all(selected.map((item) => messageNodesStore.getItem<MessageNode>(messageNodeKey(item.id))));
+  return nodes.filter((node): node is MessageNode => !!node);
+}
+
+export async function countMessageNodesByConversation(
+  conversationId: string,
+  query: Omit<MessageNodeQuery, 'order' | 'limit'> = {}
+): Promise<number> {
+  return filterMessageNodeIndex(await getMessageNodeIndex(conversationId), query).length;
+}
+
+export interface MessageNodeMetadata {
+  id: string;
+  timestamp: number;
+  role: MessageRole;
+  isArchived: boolean;
+}
+
+export async function getMessageNodeMetadataByConversation(
+  conversationId: string
+): Promise<MessageNodeMetadata[]> {
+  return getMessageNodeIndex(conversationId);
+}
+
+/** Archives the exact source batch and adds its distilled node under one store lock. */
+export async function commitDistillationBatch(
+  sourceIds: string[],
+  distilledNode: MessageNode
+): Promise<boolean> {
+  if (sourceIds.length === 0) return false;
+  await ensureMessageNodesV3();
+  return withStoreLock(messageNodesStore, async () => {
+    const uniqueSourceIds = [...new Set(sourceIds)];
+    const sourceIdSet = new Set(uniqueSourceIds);
+    if (await messageNodesStore.getItem<MessageNode>(messageNodeKey(distilledNode.id))) return false;
+    const sourceNodes = await Promise.all(
+      uniqueSourceIds.map((id) => messageNodesStore.getItem<MessageNode>(messageNodeKey(id)))
+    );
+    if (sourceNodes.some((node) => !node || node.isArchived)) return false;
+    if (sourceNodes.some((node) => node!.conversationId !== distilledNode.conversationId)) return false;
+
+    const sourceByConversation = new Map<string, MessageNodeIndexItem[]>();
+    for (const node of sourceNodes as MessageNode[]) {
+      const index = sourceByConversation.get(node.conversationId) || await getMessageNodeIndex(node.conversationId);
+      sourceByConversation.set(node.conversationId, index);
+    }
+
+    try {
+      for (const node of sourceNodes as MessageNode[]) {
+        await messageNodesStore.setItem(messageNodeKey(node.id), { ...node, isArchived: true });
+      }
+      for (const [conversationId, index] of sourceByConversation) {
+        await messageNodesStore.setItem(
+          messageNodeIndexKey(conversationId),
+          sortMessageNodeIndex(index.map((item) => sourceIdSet.has(item.id) ? { ...item, isArchived: true } : item))
+        );
+      }
+
+      const distilledIndex = await getMessageNodeIndex(distilledNode.conversationId);
+      distilledIndex.push(toMessageNodeIndexItem(distilledNode));
+      await messageNodesStore.setItem(messageNodeKey(distilledNode.id), distilledNode);
+      await messageNodesStore.setItem(
+        messageNodeIndexKey(distilledNode.conversationId),
+        sortMessageNodeIndex(distilledIndex)
+      );
+      return true;
+    } catch (error) {
+      await Promise.allSettled((sourceNodes as MessageNode[]).map((node) =>
+        messageNodesStore.setItem(messageNodeKey(node.id), node)
+      ));
+      await Promise.allSettled(Array.from(sourceByConversation, ([conversationId, index]) =>
+        messageNodesStore.setItem(messageNodeIndexKey(conversationId), index)
+      ));
+      await messageNodesStore.removeItem(messageNodeKey(distilledNode.id)).catch(() => undefined);
+      throw error;
+    }
+  });
+}
+
+export async function getAllMessageNodes(): Promise<MessageNode[]> {
+  await ensureMessageNodesV3();
+  const conversationIds: string[] = [];
+  await messageNodesStore.iterate<unknown, void>((_value, key) => {
+    if (key.startsWith(MESSAGE_NODE_INDEX_PREFIX)) {
+      conversationIds.push(key.slice(MESSAGE_NODE_INDEX_PREFIX.length));
+    }
+  });
+  const groups = await Promise.all(conversationIds.map((id) => getMessageNodesByConversation(id)));
+  return groups.flat();
 }
 
 export async function getMessageNodeById(
   id: string
 ): Promise<MessageNode | undefined> {
-  const all = await getStoreData<MessageNode>(messageNodesStore);
-  return all.find((n) => n.id === id);
+  await ensureMessageNodesV3();
+  return (await messageNodesStore.getItem<MessageNode>(messageNodeKey(id))) || undefined;
 }
 
 export async function addMessageNode(node: MessageNode): Promise<void> {
-  await mutateStore<MessageNode>(messageNodesStore, (data) => {
-    data.push(node);
-    return data;
+  await ensureMessageNodesV3();
+  await withStoreLock(messageNodesStore, async () => {
+    const index = await getMessageNodeIndex(node.conversationId);
+    index.push(toMessageNodeIndexItem(node));
+    await messageNodesStore.setItem(messageNodeKey(node.id), node);
+    await messageNodesStore.setItem(messageNodeIndexKey(node.conversationId), sortMessageNodeIndex(index));
   });
 }
 
-/** 批量添加消息节点 — 单次读-改-写，避免逐条 addMessageNode 的 O(n²) IO */
+/** 批量添加消息节点，按会话写入索引与节点记录。 */
 export async function addMessageNodes(nodes: MessageNode[]): Promise<void> {
   if (nodes.length === 0) return;
-  await mutateStore<MessageNode>(messageNodesStore, (data) => {
-    data.push(...nodes);
-    return data;
+  await ensureMessageNodesV3();
+  await withStoreLock(messageNodesStore, async () => {
+    const byConversation = new Map<string, MessageNode[]>();
+    for (const node of nodes) {
+      const group = byConversation.get(node.conversationId) || [];
+      group.push(node);
+      byConversation.set(node.conversationId, group);
+    }
+    for (const [conversationId, group] of byConversation) {
+      const index = await getMessageNodeIndex(conversationId);
+      index.push(...group.map(toMessageNodeIndexItem));
+      await Promise.all(group.map((node) => messageNodesStore.setItem(messageNodeKey(node.id), node)));
+      await messageNodesStore.setItem(messageNodeIndexKey(conversationId), sortMessageNodeIndex(index));
+    }
   });
 }
 
@@ -283,49 +543,96 @@ export async function updateMessageNode(
   id: string,
   updates: Partial<MessageNode>
 ): Promise<void> {
-  await mutateStore<MessageNode>(messageNodesStore, (data) => {
-    const idx = data.findIndex((n) => n.id === id);
-    if (idx !== -1) {
-      data[idx] = { ...data[idx], ...updates };
+  await ensureMessageNodesV3();
+  await withStoreLock(messageNodesStore, async () => {
+    const existing = await messageNodesStore.getItem<MessageNode>(messageNodeKey(id));
+    if (!existing) return;
+    const next = { ...existing, ...updates };
+    await messageNodesStore.setItem(messageNodeKey(id), next);
+    const oldIndex = await getMessageNodeIndex(existing.conversationId);
+    await messageNodesStore.setItem(
+      messageNodeIndexKey(existing.conversationId),
+      sortMessageNodeIndex(
+        existing.conversationId === next.conversationId
+          ? oldIndex.map((item) => item.id === id ? toMessageNodeIndexItem(next) : item)
+          : oldIndex.filter((item) => item.id !== id)
+      )
+    );
+    if (existing.conversationId !== next.conversationId) {
+      const newIndex = await getMessageNodeIndex(next.conversationId);
+      newIndex.push(toMessageNodeIndexItem(next));
+      await messageNodesStore.setItem(messageNodeIndexKey(next.conversationId), sortMessageNodeIndex(newIndex));
     }
-    return data;
   });
 }
 
 export async function deleteMessageNode(id: string): Promise<void> {
-  await mutateStore<MessageNode>(messageNodesStore, (data) =>
-    data.filter((n) => n.id !== id)
-  );
+  await ensureMessageNodesV3();
+  await withStoreLock(messageNodesStore, async () => {
+    const node = await messageNodesStore.getItem<MessageNode>(messageNodeKey(id));
+    if (!node) return;
+    const index = await getMessageNodeIndex(node.conversationId);
+    await messageNodesStore.removeItem(messageNodeKey(id));
+    await messageNodesStore.setItem(
+      messageNodeIndexKey(node.conversationId),
+      index.filter((item) => item.id !== id)
+    );
+  });
 }
 
 /** 批量删除某个对话的所有消息节点（1 次读取 + 1 次写入，替代逐条 O(n²)） */
 export async function deleteMessageNodesByConversation(
   conversationId: string
 ): Promise<number> {
-  // 注意：返回值需在锁内计算，避免读到被中途改写的快照
+  await ensureMessageNodesV3();
   return withStoreLock(messageNodesStore, async () => {
-    const all = await getStoreData<MessageNode>(messageNodesStore);
-    const deletedCount = all.filter(
-      (n) => n.conversationId === conversationId
-    ).length;
-    const remaining = all.filter((n) => n.conversationId !== conversationId);
-    await setStoreData(messageNodesStore, remaining);
-    return deletedCount;
+    const index = await getMessageNodeIndex(conversationId);
+    await Promise.all(index.map((item) => messageNodesStore.removeItem(messageNodeKey(item.id))));
+    await messageNodesStore.removeItem(messageNodeIndexKey(conversationId));
+    return index.length;
   });
 }
 
 export async function updateMessageNodes(
   updates: Array<{ id: string; changes: Partial<MessageNode> }>
 ): Promise<void> {
-  await mutateStore<MessageNode>(messageNodesStore, (data) => {
-    for (const u of updates) {
-      const idx = data.findIndex((n) => n.id === u.id);
-      if (idx !== -1) {
-        data[idx] = { ...data[idx], ...u.changes };
-      }
+  if (updates.length === 0) return;
+  await ensureMessageNodesV3();
+  await withStoreLock(messageNodesStore, async () => {
+    for (const update of updates) {
+      const node = await messageNodesStore.getItem<MessageNode>(messageNodeKey(update.id));
+      if (!node) continue;
+      const next = { ...node, ...update.changes };
+      await messageNodesStore.setItem(messageNodeKey(update.id), next);
+      const index = await getMessageNodeIndex(node.conversationId);
+      await messageNodesStore.setItem(
+        messageNodeIndexKey(node.conversationId),
+        sortMessageNodeIndex(index.map((item) => item.id === node.id ? toMessageNodeIndexItem(next) : item))
+      );
     }
-    return data;
   });
+}
+
+/** Replaces all message records. Used by backup import and safely clears old shards. */
+export async function replaceAllMessageNodes(nodes: MessageNode[]): Promise<void> {
+  await withStoreLock(messageNodesStore, async () => {
+    await messageNodesStore.clear();
+    const byConversation = new Map<string, MessageNode[]>();
+    for (const node of nodes) {
+      const group = byConversation.get(node.conversationId) || [];
+      group.push(node);
+      byConversation.set(node.conversationId, group);
+    }
+    for (const [conversationId, group] of byConversation) {
+      await Promise.all(group.map((node) => messageNodesStore.setItem(messageNodeKey(node.id), node)));
+      await messageNodesStore.setItem(
+        messageNodeIndexKey(conversationId),
+        sortMessageNodeIndex(group.map(toMessageNodeIndexItem))
+      );
+    }
+    await messageNodesStore.setItem(MESSAGE_NODE_VERSION_KEY, true);
+  });
+  messageNodeMigration = Promise.resolve();
 }
 
 /* ──────────────── World Books ──────────────── */
@@ -362,6 +669,15 @@ export async function updateWorldBook(
 }
 
 export async function deleteWorldBook(id: string): Promise<void> {
+  await mutateStore<Character>(charactersStore, (data) =>
+    data.map((character) => {
+      if (character.worldBookId !== id && character.cacheWorldBookId !== id) return character;
+      const next = { ...character };
+      if (next.worldBookId === id) delete next.worldBookId;
+      if (next.cacheWorldBookId === id) delete next.cacheWorldBookId;
+      return next;
+    })
+  );
   await mutateStore<WorldBook>(worldbooksStore, (data) =>
     data.filter((w) => w.id !== id)
   );
@@ -429,12 +745,16 @@ export interface UISettings {
   scribeMode?: 'charA' | 'charB' | 'auto';
   galgamePrompt?: string;
   mutualObservePrompt?: string;
+  charAModelId?: string | null;
+  charBModelId?: string | null;
   thinkingEnabled?: boolean;
   debugMode?: boolean;
   scribeEnabled?: boolean;
   scribeCacheWorldBookEnabled?: boolean;
   scribeRounds?: number;
   lowRateMode?: boolean;
+  distillationConfig?: DistillationConfig;
+  contextConfig?: ContextAssemblyConfig;
   // 高级提示词模板（空=用默认）
   tplUserWrapper?: string;
   tplOtherCharWrapper?: string;
@@ -477,12 +797,16 @@ export async function setUISettings(settings: Partial<UISettings>): Promise<void
         scribeMode: settings.scribeMode ?? existing.scribeMode,
         galgamePrompt: settings.galgamePrompt ?? existing.galgamePrompt,
         mutualObservePrompt: settings.mutualObservePrompt ?? existing.mutualObservePrompt,
+        charAModelId: settings.charAModelId ?? existing.charAModelId,
+        charBModelId: settings.charBModelId ?? existing.charBModelId,
         thinkingEnabled: settings.thinkingEnabled ?? existing.thinkingEnabled,
         debugMode: settings.debugMode ?? existing.debugMode,
         scribeEnabled: settings.scribeEnabled ?? existing.scribeEnabled,
         scribeCacheWorldBookEnabled: settings.scribeCacheWorldBookEnabled ?? existing.scribeCacheWorldBookEnabled,
         scribeRounds: settings.scribeRounds ?? existing.scribeRounds,
         lowRateMode: settings.lowRateMode ?? existing.lowRateMode,
+        distillationConfig: settings.distillationConfig ?? existing.distillationConfig,
+        contextConfig: settings.contextConfig ?? existing.contextConfig,
         tplUserWrapper: settings.tplUserWrapper ?? existing.tplUserWrapper,
         tplOtherCharWrapper: settings.tplOtherCharWrapper ?? existing.tplOtherCharWrapper,
         tplIdentityAnchor: settings.tplIdentityAnchor ?? existing.tplIdentityAnchor,

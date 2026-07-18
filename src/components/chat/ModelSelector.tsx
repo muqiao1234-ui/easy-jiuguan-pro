@@ -4,18 +4,18 @@ import Dropdown from '../ui/Dropdown';
 
 interface ModelSelectorProps {
   models: ModelConfig[];
-  chatModelId: string | null;
-  distillModelId: string | null;
-  onChatModelChange: (id: string) => void;
-  onDistillModelChange: (id: string) => void;
+  charAModelId: string | null;
+  charBModelId: string | null;
+  onCharAModelChange: (id: string) => void;
+  onCharBModelChange: (id: string) => void;
 }
 
 export default function ModelSelector({
   models,
-  chatModelId,
-  distillModelId,
-  onChatModelChange,
-  onDistillModelChange,
+  charAModelId,
+  charBModelId,
+  onCharAModelChange,
+  onCharBModelChange,
 }: ModelSelectorProps) {
   const options = models.map((m) => ({
     value: m.id,
@@ -25,21 +25,21 @@ export default function ModelSelector({
   return (
     <div className="flex items-center gap-3 px-4 py-1.5 bg-slate-900/60 border-b border-slate-800">
       <div className="flex items-center gap-1.5 flex-1">
-        <span className="text-[11px] text-slate-500 whitespace-nowrap">聊天模型:</span>
+        <span className="text-[11px] text-emerald-400 whitespace-nowrap">角色 A:</span>
         <Dropdown
           options={options}
-          value={chatModelId}
-          onChange={onChatModelChange}
+          value={charAModelId}
+          onChange={onCharAModelChange}
           placeholder="未选择"
           className="flex-1 min-w-0"
         />
       </div>
       <div className="flex items-center gap-1.5 flex-1">
-        <span className="text-[11px] text-slate-500 whitespace-nowrap">蒸馏模型:</span>
+        <span className="text-[11px] text-violet-400 whitespace-nowrap">角色 B:</span>
         <Dropdown
           options={options}
-          value={distillModelId}
-          onChange={onDistillModelChange}
+          value={charBModelId}
+          onChange={onCharBModelChange}
           placeholder="未选择"
           className="flex-1 min-w-0"
         />

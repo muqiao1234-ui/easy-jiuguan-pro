@@ -331,8 +331,7 @@ export default function CharacterManager() {
     }
   };
 
-  const isCacheWorldBook = (wb: { kind?: string; entryLimit?: number; name: string }) =>
-    wb.kind === 'cache' || wb.entryLimit === CACHE_WORLD_BOOK_LIMIT || wb.name.includes('缓存世界书');
+  const isCacheWorldBook = (wb: { kind?: string }) => wb.kind === 'cache';
   const manualWorldBooks = worldbooks.filter((w) => !isCacheWorldBook(w));
   const cacheWorldBooks = worldbooks.filter(isCacheWorldBook);
   const wbOptions = [{ value: '', label: '无世界书' }, ...manualWorldBooks.map((w) => ({ value: w.id, label: w.name }))];

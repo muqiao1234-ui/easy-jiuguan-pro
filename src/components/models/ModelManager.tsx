@@ -99,7 +99,8 @@ export default function ModelManager() {
       await updateModel(editingId, { ...form, temperature: safeTemp, topP: safeTopP });
     } else {
       const m = await addModel(form.name, form.baseUrl, form.apiKey, form.defaultModel, form.maxContextTokens, safeTemp, safeTopP);
-      if (!state.currentChatModelId) dispatch({ type: 'SET_CHAT_MODEL', id: m.id });
+      if (!state.currentCharAModelId) dispatch({ type: 'SET_CHAR_A_MODEL', id: m.id });
+      if (!state.currentCharBModelId) dispatch({ type: 'SET_CHAR_B_MODEL', id: m.id });
       if (!state.currentDistillModelId) dispatch({ type: 'SET_DISTILL_MODEL', id: m.id });
     }
     setShowModal(false);
@@ -183,9 +184,13 @@ export default function ModelManager() {
               <span className={`text-xs ${lat.color}`}>{lat.text}</span>
             </div>
             <div className="flex gap-1">
-              <Button size="sm" variant={state.currentChatModelId === m.id ? 'primary' : 'ghost'}
-                onClick={() => dispatch({ type: 'SET_CHAT_MODEL', id: m.id })}>
-                聊天
+              <Button size="sm" variant={state.currentCharAModelId === m.id ? 'primary' : 'ghost'}
+                onClick={() => dispatch({ type: 'SET_CHAR_A_MODEL', id: m.id })}>
+                角色A
+              </Button>
+              <Button size="sm" variant={state.currentCharBModelId === m.id ? 'primary' : 'ghost'}
+                onClick={() => dispatch({ type: 'SET_CHAR_B_MODEL', id: m.id })}>
+                角色B
               </Button>
               <Button size="sm" variant={state.currentDistillModelId === m.id ? 'primary' : 'ghost'}
                 onClick={() => dispatch({ type: 'SET_DISTILL_MODEL', id: m.id })}>

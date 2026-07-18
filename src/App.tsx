@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { AppProvider, useApp } from './hooks/useApp';
 import { useModels } from './hooks/useModels';
 import { useCharacters } from './hooks/useCharacters';
@@ -58,12 +58,16 @@ function AppInner() {
     loadConversations();
   }, [seeded]);
 
-  // 当预设模型已注入但用户尚未选择任何模型时，自动选中预设模型
+  // 当预设模型已注入但角色槽位尚未选择模型时，自动绑定到 A/B。
   useEffect(() => {
-    if (!state.currentChatModelId && models.some((m) => m.id === PRESET_MODEL_ID)) {
-      dispatch({ type: 'SET_CHAT_MODEL', id: PRESET_MODEL_ID });
+    if (!models.some((m) => m.id === PRESET_MODEL_ID)) return;
+    if (!state.currentCharAModelId || !models.some((m) => m.id === state.currentCharAModelId)) {
+      dispatch({ type: 'SET_CHAR_A_MODEL', id: PRESET_MODEL_ID });
     }
-  }, [models, state.currentChatModelId]);
+    if (!state.currentCharBModelId || !models.some((m) => m.id === state.currentCharBModelId)) {
+      dispatch({ type: 'SET_CHAR_B_MODEL', id: PRESET_MODEL_ID });
+    }
+  }, [models, state.currentCharAModelId, state.currentCharBModelId]);
 
   // Load conversation data when switching
   useEffect(() => {
@@ -93,6 +97,14 @@ function AppInner() {
     }
   };
 
+  const handleDeleteConversation = useCallback(async (id: string) => {
+    await deleteConversation(id);
+    if (state.currentConversationId === id) {
+      setCurrentConversation(null);
+      dispatch({ type: 'SET_CURRENT_CONVERSATION', id: null });
+    }
+  }, [deleteConversation, dispatch, setCurrentConversation, state.currentConversationId]);
+
   // Resolve active view content for sidebar
   const renderSidebarContent = () => {
     switch (state.activeView) {
@@ -104,7 +116,7 @@ function AppInner() {
             characters={characters}
             currentConversation={currentConversation}
             onCreateConversation={createConversation}
-            onDeleteConversation={deleteConversation}
+            onDeleteConversation={handleDeleteConversation}
             onCreateFolder={createConversationFolder}
             onRenameFolder={renameConversationFolder}
             onSetFolderCollapsed={setConversationFolderCollapsed}
@@ -130,7 +142,7 @@ function AppInner() {
             characters={characters}
             currentConversation={currentConversation}
             onCreateConversation={createConversation}
-            onDeleteConversation={deleteConversation}
+            onDeleteConversation={handleDeleteConversation}
             onCreateFolder={createConversationFolder}
             onRenameFolder={renameConversationFolder}
             onSetFolderCollapsed={setConversationFolderCollapsed}

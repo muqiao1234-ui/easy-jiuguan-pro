@@ -23,6 +23,7 @@ import Dropdown from '../ui/Dropdown';
 import Icon from '../ui/Icon';
 
 import { apiFetch } from '../../utils/apiFetch';
+import { stripReasoningBlocks } from '../../utils/responseText';
 interface StateBookPanelProps {
   conversationId: string | null;
   conversationTitle: string;
@@ -105,9 +106,10 @@ export default function StateBookPanel({
           { role: 'system', content: prompt },
         ];
         let cacheBookId: string | null = null;
+        let manualWorldBookKeys: string[] = [];
         if (scribeConfig.scribeCacheWorldBookEnabled && character?.cacheWorldBookId) {
           const cacheBookRaw = await Stores.getWorldBookById(character.cacheWorldBookId);
-          if (cacheBookRaw) {
+          if (cacheBookRaw?.kind === 'cache') {
             const cacheBook = normalizeCacheWorldBook(cacheBookRaw);
             cacheBookId = cacheBook.id;
             if (
@@ -124,6 +126,7 @@ export default function StateBookPanel({
             const manualBook = character.worldBookId
               ? (await Stores.getWorldBookById(character.worldBookId)) || null
               : null;
+            manualWorldBookKeys = (manualBook?.entries || []).flatMap((entry) => entry.keys);
             messages.push({
               role: 'system',
               content: buildCacheWorldBookPrompt(cacheBook, manualBook, state.tplCacheWorldBookPrompt),
@@ -168,22 +171,26 @@ export default function StateBookPanel({
         // 兼容思维链模型：content 为空时从 reasoning_content 提取 JSON
         const content = data.choices?.[0]?.message?.content || '';
         const reasoning = data.choices?.[0]?.message?.reasoning_content || '';
-        const rawContent = content || reasoning || data.choices?.[0]?.text || '';
-        const { displayText, patch } = extractCacheWorldBookPatch(rawContent);
+        const rawContent = stripReasoningBlocks(content || data.choices?.[0]?.text || '');
+        let { displayText, patch } = extractCacheWorldBookPatch(rawContent);
+        if (!patch && reasoning) {
+          patch = extractCacheWorldBookPatch(reasoning).patch;
+        }
         if (cacheBookId && patch?.operations?.length) {
           const latestBook = await Stores.getWorldBookById(cacheBookId);
-          if (latestBook) {
+          if (latestBook?.kind === 'cache') {
             const normalized = normalizeCacheWorldBook(latestBook);
             await Stores.updateWorldBook(cacheBookId, {
               kind: 'cache',
               entryLimit: CACHE_WORLD_BOOK_LIMIT,
-              entries: mergeCacheWorldBookEntries(normalized.entries, patch.operations),
+              entries: mergeCacheWorldBookEntries(normalized.entries, patch.operations, manualWorldBookKeys),
             });
           }
         }
         let galgameData = parseGalgameResponse(displayText || rawContent, charName);
         if (!galgameData && !content && reasoning) {
-          galgameData = parseGalgameResponse(extractCacheWorldBookPatch(reasoning).displayText || reasoning, charName);
+          const reasoningSource = extractCacheWorldBookPatch(reasoning).displayText || reasoning;
+          galgameData = parseGalgameResponse(reasoningSource, charName);
         }
         const galgameTokenCost = data.usage?.total_tokens;
         if (galgameData) {
@@ -206,9 +213,10 @@ export default function StateBookPanel({
           { role: 'user' as const, content: dialogueText },
         ];
         let cacheBookId: string | null = null;
+        let manualWorldBookKeys: string[] = [];
         if (scribeConfig.scribeCacheWorldBookEnabled && character?.cacheWorldBookId) {
           const cacheBookRaw = await Stores.getWorldBookById(character.cacheWorldBookId);
-          if (cacheBookRaw) {
+          if (cacheBookRaw?.kind === 'cache') {
             const cacheBook = normalizeCacheWorldBook(cacheBookRaw);
             cacheBookId = cacheBook.id;
             if (
@@ -225,6 +233,7 @@ export default function StateBookPanel({
             const manualBook = character.worldBookId
               ? (await Stores.getWorldBookById(character.worldBookId)) || null
               : null;
+            manualWorldBookKeys = (manualBook?.entries || []).flatMap((entry) => entry.keys);
             messages.splice(1, 0, {
               role: 'system' as const,
               content: buildCacheWorldBookPrompt(cacheBook, manualBook, state.tplCacheWorldBookPrompt),
@@ -247,17 +256,22 @@ export default function StateBookPanel({
         });
         if (!resp.ok) return;
         const data = await resp.json();
-        const rawContent = data.choices?.[0]?.message?.content || '';
-        const { displayText, patch } = extractCacheWorldBookPatch(rawContent);
+        const responseMessage = data.choices?.[0]?.message || {};
+        const rawReasoning = responseMessage.reasoning_content || '';
+        const rawContent = stripReasoningBlocks(responseMessage.content || data.choices?.[0]?.text || '');
+        let { displayText, patch } = extractCacheWorldBookPatch(rawContent);
+        if (!patch && rawReasoning) {
+          patch = extractCacheWorldBookPatch(rawReasoning).patch;
+        }
         const newContent = displayText || (!patch ? rawContent : '');
         if (cacheBookId && patch?.operations?.length) {
           const latestBook = await Stores.getWorldBookById(cacheBookId);
-          if (latestBook) {
+          if (latestBook?.kind === 'cache') {
             const normalized = normalizeCacheWorldBook(latestBook);
             await Stores.updateWorldBook(cacheBookId, {
               kind: 'cache',
               entryLimit: CACHE_WORLD_BOOK_LIMIT,
-              entries: mergeCacheWorldBookEntries(normalized.entries, patch.operations),
+              entries: mergeCacheWorldBookEntries(normalized.entries, patch.operations, manualWorldBookKeys),
             });
           }
         }

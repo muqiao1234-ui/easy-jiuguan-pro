@@ -117,6 +117,13 @@ export interface MessageNode {
   tokenCostTotal?: number;
   /** 状态书/Galgame 引擎单独消耗的 token 数（独立 API 调用） */
   scribeTokenCost?: number;
+  /** 蒸馏批次元数据；新版本结晶为累计摘要，上下文只需注入最新一份 */
+  distillationMeta?: {
+    sourceNodeIds: string[];
+    roundStart: number;
+    roundEnd: number;
+    cumulative: boolean;
+  };
 }
 
 /** 世界书（World Book）条目 */
@@ -193,7 +200,7 @@ export interface DistillationConfig {
   autoTrigger: boolean;
   /** 自定义蒸馏提示词模板，{dialogue} 会被替换为对话文本 */
   distillationPrompt: string;
-  /** 滑动窗口：强制保留最近 N 条消息不参与蒸馏，默认 3 */
+  /** 滑动窗口：强制保留最近 N 个完整对话轮次不参与蒸馏，默认 3 */
   retainRecentCount: number;
 }
 
@@ -263,7 +270,10 @@ export interface WallpaperConfig {
 export interface AppState {
   activeView: ViewType;
   currentConversationId: string | null;
-  currentChatModelId: string | null;
+  /** 对话角色 A 使用的模型 ID */
+  currentCharAModelId: string | null;
+  /** 对话角色 B 使用的模型 ID */
+  currentCharBModelId: string | null;
   currentDistillModelId: string | null;
   /** 状态书总结模型 ID（第三书记员专用通道） */
   currentScribeModelId: string | null;
@@ -324,7 +334,8 @@ export type AppAction =
   | { type: 'SET_VIEW'; view: ViewType }
   | { type: 'SET_CONVERSATION'; id: string | null }
   | { type: 'SET_CURRENT_CONVERSATION'; id: string | null }
-  | { type: 'SET_CHAT_MODEL'; id: string | null }
+  | { type: 'SET_CHAR_A_MODEL'; id: string | null }
+  | { type: 'SET_CHAR_B_MODEL'; id: string | null }
   | { type: 'SET_DISTILL_MODEL'; id: string | null }
   | { type: 'SET_SCRIBE_MODEL'; id: string | null }
   | { type: 'SET_MOBILE'; isMobile: boolean }
