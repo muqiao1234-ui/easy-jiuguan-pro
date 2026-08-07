@@ -149,8 +149,8 @@ html:not(.dark) .text-slate-100 { color: #0f172a !important; }
 html:not(.dark) .text-slate-200 { color: #1e293b !important; }
 html:not(.dark) .text-slate-300 { color: #334155 !important; }
 html:not(.dark) .text-slate-400 { color: #475569 !important; }
-html:not(.dark) .text-slate-500 { color: #64748b !important; }
-html:not(.dark) .text-slate-600 { color: #94a3b8 !important; }
+html:not(.dark) .text-slate-500 { color: #475569 !important; }
+html:not(.dark) .text-slate-600 { color: #334155 !important; }
 
 html:not(.dark) .border-slate-600 { border-color: #cbd5e1 !important; }
 html:not(.dark) .border-slate-700 { border-color: #e2e8f0 !important; }
@@ -165,19 +165,19 @@ html:not(.dark) .hover\:border-slate-600:hover { border-color: #cbd5e1 !importan
 html:not(.dark) .hover\:text-slate-300:hover { color: #334155 !important; }
 html:not(.dark) .hover\:text-slate-200:hover { color: #1e293b !important; }
 
-html:not(.dark) .placeholder-slate-500::placeholder { color: #94a3b8 !important; }
+html:not(.dark) .placeholder-slate-500::placeholder { color: #64748b !important; }
 
 /* ===== 浅色模式 — 缺失的 slate-900/90 透明度覆盖（TopBar、Sidebar 关键修复） ===== */
 html:not(.dark) .bg-slate-900\/90 { background-color: rgba(255, 255, 255, 0.9) !important; }
 
 /* ===== 浅色模式 Amber 色系覆盖 ===== */
 /* Amber 文字 — 浅色模式下加深以保证可读性 */
-html:not(.dark) .text-amber-500 { color: #d97706 !important; }       /* → amber-600 */
-html:not(.dark) .text-amber-400 { color: #d97706 !important; }       /* → amber-600 */
+html:not(.dark) .text-amber-500 { color: #b45309 !important; }       /* -> amber-700 */
+html:not(.dark) .text-amber-400 { color: #b45309 !important; }       /* -> amber-700 */
 html:not(.dark) .text-amber-300 { color: #b45309 !important; }       /* → amber-700 */
 html:not(.dark) .text-amber-200\/80 { color: rgba(180, 83, 9, 0.85) !important; }   /* → amber-700 */
-html:not(.dark) .text-amber-400\/80 { color: rgba(217, 119, 6, 0.85) !important; }
-html:not(.dark) .text-amber-400\/70 { color: rgba(217, 119, 6, 0.75) !important; }
+html:not(.dark) .text-amber-400\/80 { color: #b45309 !important; }
+html:not(.dark) .text-amber-400\/70 { color: #b45309 !important; }
 html:not(.dark) .text-amber-600\/60 { color: rgba(180, 83, 9, 0.6) !important; }
 
 /* Amber 悬停文字 */
@@ -201,6 +201,22 @@ html:not(.dark) .border-amber-500 { border-color: #d97706 !important; }
 html:not(.dark) .border-amber-600\/30 { border-color: rgba(217, 119, 6, 0.25) !important; }
 html:not(.dark) .border-amber-600\/50 { border-color: rgba(217, 119, 6, 0.4) !important; }
 
+/* Map bright 400 accents to darker 700 tones in light theme. */
+html:not(.dark) .text-purple-400 { color: #7e22ce !important; }
+html:not(.dark) .text-violet-400 { color: #6d28d9 !important; }
+html:not(.dark) .text-blue-400 { color: #1d4ed8 !important; }
+html:not(.dark) .text-cyan-400 { color: #0e7490 !important; }
+html:not(.dark) .text-emerald-400 { color: #047857 !important; }
+html:not(.dark) .text-green-400 { color: #15803d !important; }
+html:not(.dark) .text-orange-400 { color: #c2410c !important; }
+html:not(.dark) .text-red-400 { color: #b91c1c !important; }
+html:not(.dark) .text-rose-400 { color: #be123c !important; }
+html:not(.dark) .text-rose-500 { color: #be123c !important; }
+html:not(.dark) .text-sky-500 { color: #0369a1 !important; }
+html:not(.dark) .hover\:text-sky-500:hover { color: #0369a1 !important; }
+
+/* Use dark text on amber selection states. */
+.bg-amber-500.text-white { color: #0f172a !important; }
 /* ===== 工具类 ===== */
 @layer components {
   .glass-panel {

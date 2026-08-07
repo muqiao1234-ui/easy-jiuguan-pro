@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
-import type { MessageNode, ModelConfig, DistillationResult, WorldBookEntry } from '../types';
+import type { MessageNode, ModelConfig, DistillationResult } from '../types';
 import { generateId } from '../utils/id';
 import { DEFAULT_DISTILLATION_PROMPT, DEFAULT_TPL_DISTILLED_NODE_PREFIX } from '../utils/constants';
 
@@ -16,8 +16,6 @@ interface PerformParams {
   tplDistilledNodePrefix?: string;
   /** 上一轮记忆结晶的完整内容（无则 null） */
   prevDistilledContent?: string | null;
-  /** 蒸馏区间对话中激活的世界书条目 */
-  activatedWorldBookEntries?: WorldBookEntry[];
   getModelById: (id: string) => Promise<ModelConfig | undefined>;
   commitDistillationBatch: (sourceIds: string[], distilledNode: MessageNode) => Promise<boolean>;
 }
@@ -30,18 +28,6 @@ export function useDistillation() {
   const checkNeeded = (unarchivedCount: number, threshold: number): boolean => {
     return unarchivedCount >= threshold;
   };
-
-  /**
-   * 将世界书条目格式化为粘连到记忆结晶尾部的文本块。
-   * 只保留条目名词，不包含正文，节约 token。
-   * 格式：(附带：区间激活的世界书条目表)
-   *       [词条1] [词条2] [词条3]
-   */
-  function formatWorldBookAppendix(entries: WorldBookEntry[]): string {
-    if (!entries || entries.length === 0) return '';
-    const names = entries.map((e) => `[${e.keys?.[0] || '未知'}]`).join(' ');
-    return '\n\n(附带：区间激活的世界书条目表)\n' + names;
-  }
 
   const performDistillation = useCallback(async (params: PerformParams) => {
     if (inFlightRef.current) throw new Error('蒸馏任务正在进行中，请等待当前任务完成');
@@ -61,17 +47,10 @@ export function useDistillation() {
       // ── 构建蒸馏 AI 的 messages 数组 ──
       // 结构：(提示词) → (上一轮记忆结晶) → (区间对话+激活世界书) → (提示词·尾部强化)
       const basePrompt = params.distillationPrompt || DEFAULT_DISTILLATION_PROMPT;
-      const wbEntries = params.activatedWorldBookEntries || [];
-      const wbText = wbEntries.length > 0
-        ? '\n\n--- 本区间激活的世界书条目 ---\n' +
-          wbEntries.map((e) => `[${e.keys?.[0] || '未知'}] ${e.value}`).join('\n')
-        : '';
-
       const messages: Array<{ role: string; content: string }> = [];
 
-      const dialogueWithWorldBook = dialogueText + wbText;
       const hasDialoguePlaceholder = basePrompt.includes('{dialogue}');
-      const promptWithDialogue = basePrompt.split('{dialogue}').join(dialogueWithWorldBook);
+      const promptWithDialogue = basePrompt.split('{dialogue}').join(dialogueText);
 
       // 1. 上一轮累计记忆（如有）
       if (params.prevDistilledContent) {
@@ -91,10 +70,8 @@ export function useDistillation() {
         messages.push({
           role: 'user',
           content:
-            '以下是本轮需要蒸馏的完整对话内容' +
-            (wbText ? '（含区间激活的世界书信息）' : '') +
-            '：\n\n' +
-            dialogueWithWorldBook,
+            '以下是本轮需要蒸馏的完整对话内容：\n\n' +
+            dialogueText,
         });
       }
 
@@ -119,16 +96,11 @@ export function useDistillation() {
       const summary = stripReasoningBlocks(rawResponse).trim();
       if (!summary) throw new Error('蒸馏模型没有返回有效摘要，原对话未归档');
 
-      // ── 记忆结晶尾部粘连世界书条目 ──
-      // 格式：记忆结晶正文 + (附带：区间激活的世界书条目表)
-      const wbAppendix = formatWorldBookAppendix(wbEntries);
-      const fullSummary = summary + wbAppendix;
-
       const content = (params.tplDistilledNodePrefix || DEFAULT_TPL_DISTILLED_NODE_PREFIX)
         .replace('{start}', String(params.roundStart))
         .replace('{end}', String(params.roundEnd))
         .replace('{total}', String(params.roundEnd))
-        .replace('{summary}', fullSummary);
+        .replace('{summary}', summary);
 
       // 蒸馏是 fire-and-forget 异步触发的，蒸馏过程中用户可能继续发消息。
       // 若摘要节点用 Date.now()，其时间戳会落在"蒸馏期间新发消息"之后，
@@ -158,7 +130,7 @@ export function useDistillation() {
       const result: DistillationResult = {
         roundStart: params.roundStart,
         roundEnd: params.roundEnd,
-        summary: fullSummary,
+        summary,
         nodeId: distilledNode.id,
       };
       setLastResult(result);

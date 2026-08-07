@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { useApp } from '../../hooks/useApp';
-import { readFileAsTextRobust } from '../../utils/encoding';
+import { createBackupPayload, downloadJsonFile, importBackupPayload, readJsonFile } from '../../utils/backup';
 import Toggle from '../ui/Toggle';
 import Button from '../ui/Button';
 import { processWallpaper } from '../../utils/wallpaper';
@@ -20,10 +20,44 @@ import {
   DEFAULT_TPL_DISTILLED_NODE_PREFIX,
   DEFAULT_TPL_CACHE_WORLD_BOOK_PROMPT,
   DEFAULT_TPL_REVERSE_ENGINEER,
+  DEFAULT_TPL_STICKER_PROMPT,
+  DEFAULT_TPL_MVU_PROMPT,
+  DEFAULT_TPL_MVU_FALLBACK_PROMPT,
+  DEFAULT_TPL_IMAGE_PROMPT,
+  DEFAULT_TPL_COMFY_MAPPING_PROMPT,
+  MAX_ANIMATED_STICKER_BYTES,
+  MAX_STICKER_PACKS,
+  MAX_STICKERS_PER_PACK,
 } from '../../utils/constants';
-import type { MessageNode, MessageRole } from '../../types';
+import type { MessageNode, MessageRole, StickerPack } from '../../types';
 
-type BackupData = Partial<Record<'models' | 'characters' | 'conversations' | 'conversation_folders' | 'message_nodes' | 'worldbooks' | 'global_states', unknown[]>>;
+type BackupData = Partial<Record<'models' | 'characters' | 'conversations' | 'conversation_folders' | 'message_nodes' | 'worldbooks' | 'global_states' | 'sticker_packs', unknown[]>>;
+
+interface SerializedStickerItem {
+  id: string;
+  label: string;
+  mimeType: string;
+  size: number;
+  dataUrl: string;
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('表情包图片读取失败'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const match = dataUrl.match(/^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/);
+  if (!match) throw new Error('表情包备份包含无效图片数据');
+  const binary = atob(match[2]);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return new Blob([bytes], { type: match[1] });
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -120,7 +154,23 @@ function normalizeBackupData(raw: unknown): BackupData {
     return state;
   });
 
-  const normalized: BackupData = { models, characters, conversations, conversation_folders: conversationFolders, message_nodes: messageNodes, worldbooks, global_states: globalStates };
+  const stickerPacks = assertObjectArray('sticker_packs', assertStringRecordArray(raw, 'sticker_packs'))?.map((pack) => {
+    assertStringField(pack, 'id', 'sticker_packs');
+    assertStringField(pack, 'name', 'sticker_packs');
+    const stickers = (pack as Record<string, unknown>).stickers;
+    if (!Array.isArray(stickers)) throw new Error('sticker_packs 缺少 stickers 数组');
+    if (stickers.length > MAX_STICKERS_PER_PACK) throw new Error(`表情包单组不能超过 ${MAX_STICKERS_PER_PACK} 张`);
+    for (const sticker of stickers) {
+      assertStringField(sticker, 'id', 'sticker_packs.stickers');
+      assertStringField(sticker, 'label', 'sticker_packs.stickers');
+      assertStringField(sticker, 'mimeType', 'sticker_packs.stickers');
+      assertStringField(sticker, 'dataUrl', 'sticker_packs.stickers');
+    }
+    return pack;
+  });
+  if ((stickerPacks?.length || 0) > MAX_STICKER_PACKS) throw new Error(`表情包最多只能导入 ${MAX_STICKER_PACKS} 组`);
+
+  const normalized: BackupData = { models, characters, conversations, conversation_folders: conversationFolders, message_nodes: messageNodes, worldbooks, global_states: globalStates, sticker_packs: stickerPacks };
   if (!Object.values(normalized).some(Boolean)) throw new Error('备份文件没有可导入的数据表');
   return normalized;
 }
@@ -142,6 +192,9 @@ async function importBackupData(raw: unknown) {
   const previousMessageNodes = data.message_nodes !== undefined
     ? await Stores.getAllMessageNodes()
     : undefined;
+  const previousStickerPacks = data.sticker_packs !== undefined
+    ? await Stores.getAllStickerPacks()
+    : undefined;
   try {
     for (const target of targets) {
       previous.push({ store: target.store, value: await target.store.getItem('data') });
@@ -150,16 +203,35 @@ async function importBackupData(raw: unknown) {
     if (data.message_nodes !== undefined) {
       await Stores.replaceAllMessageNodes(data.message_nodes as MessageNode[]);
     }
+    if (data.sticker_packs !== undefined) {
+      const stickerPacks: StickerPack[] = data.sticker_packs.map((rawPack) => {
+        const pack = rawPack as Record<string, unknown>;
+        const stickers = (pack.stickers as SerializedStickerItem[]).map((sticker) => {
+          const blob = dataUrlToBlob(sticker.dataUrl);
+          if (blob.size > MAX_ANIMATED_STICKER_BYTES) throw new Error(`表情“${sticker.label}”超过 1.8 MiB`);
+          return { id: sticker.id, label: sticker.label, mimeType: sticker.mimeType, size: blob.size, blob };
+        });
+        return { id: String(pack.id), name: String(pack.name), createdAt: Number(pack.createdAt) || Date.now(), stickers };
+      });
+      await Stores.replaceAllStickerPacks(stickerPacks);
+    }
   } catch (err) {
     await Promise.allSettled(
       previous.reverse().map((item) => item.store.setItem('data', item.value))
     );
     if (previousMessageNodes) await Stores.replaceAllMessageNodes(previousMessageNodes);
+    if (previousStickerPacks) await Stores.replaceAllStickerPacks(previousStickerPacks);
     throw new Error(`导入写入失败，已尝试回滚：${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
-export default function SettingsPanel() {
+interface SettingsPanelProps {
+  onOpenStickerSettings?: () => void;
+  onOpenImageSettings?: () => void;
+  onOpenSyncCenter?: (tab?: 'sync' | 'secrets', action?: 'upload' | 'download') => void;
+}
+
+export default function SettingsPanel({ onOpenStickerSettings, onOpenImageSettings, onOpenSyncCenter }: SettingsPanelProps) {
   const { state, dispatch } = useApp();
   const wallpaperInputRef = useRef<HTMLInputElement>(null);
   const [observeOpen, setObserveOpen] = useState(false);
@@ -183,6 +255,10 @@ export default function SettingsPanel() {
     <div className="space-y-4 p-1">
       <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">设置</h3>
 
+      <div className="border-b border-slate-300/60 dark:border-slate-700/60 pb-2 pt-1">
+        <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100">常用设置</h4>
+        <p className="mt-1 text-[10px] text-slate-600 dark:text-slate-400">日常使用优先调整这里：外观、请求策略、记忆和上下文范围。</p>
+      </div>
       {/* 主题与壁纸 */}
       <div className="bg-slate-800/50 rounded-lg p-3 space-y-3 border border-slate-700/50">
         <h4 className="text-xs font-semibold text-purple-400 uppercase tracking-wider">主题与壁纸</h4>
@@ -190,7 +266,7 @@ export default function SettingsPanel() {
         {/* 主题切换 */}
         <div className="flex items-center justify-between">
           <span className="text-xs text-slate-900 dark:text-slate-100">主题模式</span>
-          <div className="flex items-center gap-1 bg-slate-900 rounded-lg p-0.5">
+          <div className="flex flex-wrap items-center gap-1 bg-slate-900 rounded-lg p-0.5">
             <button
               onClick={() => dispatch({ type: 'SET_THEME', theme: 'light' })}
               className={`px-3 py-1 text-xs rounded-md transition-colors ${
@@ -272,7 +348,7 @@ export default function SettingsPanel() {
             </div>
             <div className="flex items-center justify-between">
               <span className="text-xs text-slate-900 dark:text-slate-100">遮罩模式</span>
-              <div className="flex items-center gap-1 bg-slate-900 rounded-lg p-0.5">
+              <div className="flex flex-wrap items-center gap-1 bg-slate-900 rounded-lg p-0.5">
                 <button
                   onClick={() => dispatch({ type: 'SET_WALLPAPER', config: { overlayMode: 'light' } })}
                   className={`px-3 py-1 text-xs rounded-md transition-colors ${
@@ -323,7 +399,7 @@ export default function SettingsPanel() {
             最少完整对话轮数: {state.distillationConfig.triggerThreshold}
           </label>
           <input
-            type="range" min={5} max={50} step={5}
+            type="range" min={5} max={50} step={1}
             value={state.distillationConfig.triggerThreshold}
             onChange={(e) => dispatch({ type: 'UPDATE_DISTILLATION_CONFIG', config: { triggerThreshold: parseInt(e.target.value) } })}
             className="w-full accent-amber-500"
@@ -378,7 +454,7 @@ export default function SettingsPanel() {
             最近轮数 (M): {state.contextConfig.recentRounds}
           </label>
           <input
-            type="range" min={5} max={50} step={5}
+            type="range" min={1} max={50} step={1}
             value={state.contextConfig.recentRounds}
             onChange={(e) => dispatch({ type: 'UPDATE_CONTEXT_CONFIG', config: { recentRounds: parseInt(e.target.value) } })}
             className="w-full accent-blue-500"
@@ -386,17 +462,65 @@ export default function SettingsPanel() {
         </div>
         <div>
           <label className="block text-xs text-slate-900 dark:text-slate-100 mb-1">
-            最大蒸馏节点数 (N): {state.contextConfig.maxDistilledNodes}
+            世界书扫描深度（历史 user 条数）: {state.contextConfig.worldBookScanDepth}
+          </label>
+          <input
+            type="range" min={0} max={20} step={1}
+            value={state.contextConfig.worldBookScanDepth}
+            onChange={(e) => dispatch({ type: 'UPDATE_CONTEXT_CONFIG', config: { worldBookScanDepth: parseInt(e.target.value) } })}
+            className="w-full accent-emerald-500"
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-slate-900 dark:text-slate-100 mb-1">
+            世界书最大插入条目: {state.contextConfig.maxWorldBookEntries}
+          </label>
+          <input
+            type="range" min={1} max={20} step={1}
+            value={state.contextConfig.maxWorldBookEntries}
+            onChange={(e) => dispatch({ type: 'UPDATE_CONTEXT_CONFIG', config: { maxWorldBookEntries: parseInt(e.target.value) } })}
+            className="w-full accent-emerald-500"
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-slate-900 dark:text-slate-100 mb-1">
+            最大注入记忆数（决定 AI 能看到最多多少条记忆）: {state.contextConfig.maxInjectedMemories}
           </label>
           <input
             type="range" min={1} max={15} step={1}
-            value={state.contextConfig.maxDistilledNodes}
-            onChange={(e) => dispatch({ type: 'UPDATE_CONTEXT_CONFIG', config: { maxDistilledNodes: parseInt(e.target.value) } })}
+            value={state.contextConfig.maxInjectedMemories}
+            onChange={(e) => dispatch({ type: 'UPDATE_CONTEXT_CONFIG', config: { maxInjectedMemories: parseInt(e.target.value) } })}
             className="w-full accent-blue-500"
           />
         </div>
       </div>
 
+      <div className="border-b border-slate-300/60 dark:border-slate-700/60 pb-2 pt-3">
+        <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100">高级功能</h4>
+        <p className="mt-1 text-[10px] text-slate-600 dark:text-slate-400">角色扩展、状态引擎、同步和提示词自定义。修改前建议先完成本地备份。</p>
+      </div>
+      <button
+        type="button"
+        onClick={onOpenStickerSettings}
+        className="w-full flex items-center justify-between gap-3 rounded-lg border border-rose-200 dark:border-rose-800/50 bg-rose-50/80 dark:bg-rose-950/20 p-3 text-left hover:border-rose-400 dark:hover:border-rose-600 transition-colors"
+      >
+        <div>
+          <p className="text-xs font-semibold text-rose-800 dark:text-rose-200">高级表情包设置</p>
+          <p className="text-[10px] text-rose-700 dark:text-rose-300/90">管理最多两组本地表情包、图片压缩和功能总开关</p>
+        </div>
+        <span className="text-rose-500" aria-hidden="true">›</span>
+      </button>
+      <button
+        type="button"
+        onClick={onOpenImageSettings}
+        className="w-full flex items-center justify-between gap-3 rounded-lg border border-sky-200 dark:border-sky-800/50 bg-sky-50/80 dark:bg-sky-950/20 p-3 text-left hover:border-sky-400 dark:hover:border-sky-600 transition-colors"
+      >
+        <div>
+          <p className="text-xs font-semibold text-sky-800 dark:text-sky-200">智能生图渠道</p>
+          <p className="text-[10px] text-sky-700 dark:text-sky-300/90">配置 OpenAI 兼容生图、中文提示词提炼与渠道映射。</p>
+        </div>
+        <span className="text-sky-500" aria-hidden="true">›</span>
+      </button>
       {/* State Book Settings */}
       <div className="bg-slate-800/50 rounded-lg p-3 space-y-3 border border-slate-700/50">
         <h4 className="text-xs font-semibold text-green-400 uppercase tracking-wider">独立状态书</h4>
@@ -439,7 +563,7 @@ export default function SettingsPanel() {
               </div>
               <p className="text-[10px] text-slate-900 dark:text-slate-100">
                 {state.scribeEngine === 'text' && '传统文本状态书，AI 总结后以文本气泡展示'}
-                {state.scribeEngine === 'galgame' && '超低消耗数值引擎（每2轮），像素风卡片，非对称注入防AI谄媚'}
+                {state.scribeEngine === 'galgame' && '低消耗数值模式，主模型接收概括后的关系状态'}
               </p>
             </div>
 
@@ -461,7 +585,7 @@ export default function SettingsPanel() {
             {/* 插入策略模式 */}
             <div className="space-y-1.5">
               <label className="block text-xs text-slate-900 dark:text-slate-100">插入策略模式</label>
-              <div className="flex items-center gap-1 bg-slate-900 rounded-lg p-0.5">
+              <div className="flex flex-wrap items-center gap-1 bg-slate-900 rounded-lg p-0.5">
                 <button
                   onClick={() => dispatch({ type: 'SET_SCRIBE_MODE', mode: 'charA' })}
                   className={`flex-1 px-2 py-1 text-[11px] rounded-md transition-colors ${
@@ -490,7 +614,7 @@ export default function SettingsPanel() {
               <p className="text-[10px] text-slate-900 dark:text-slate-100">
                 {state.scribeMode === 'charA' && '状态书仅生成并绑定在角色A的回复气泡下'}
                 {state.scribeMode === 'charB' && '状态书仅生成并绑定在角色B的回复气泡下'}
-                {state.scribeMode === 'auto' && '触发时自动绑定到最新生成的 assistant 消息'}
+                {state.scribeMode === 'auto' && '触发后自动附加到本轮最新 AI 回复'}
               </p>
             </div>
 
@@ -573,24 +697,11 @@ export default function SettingsPanel() {
 
       {/* Data Management */}
       <div className="bg-slate-800/50 rounded-lg p-3 space-y-2 border border-slate-700/50">
-        <h4 className="text-xs font-semibold text-slate-900 dark:text-slate-100 uppercase tracking-wider">数据管理</h4>
-        <p className="text-xs text-slate-900 dark:text-slate-100">所有数据存储在浏览器 IndexedDB 中，不会上传到任何服务器。</p>
-        <div className="flex gap-2">
+        <h4 className="text-xs font-semibold text-slate-900 dark:text-slate-100 uppercase tracking-wider">导出、同步与密钥管理</h4>
+        <p className="text-xs text-slate-900 dark:text-slate-100">业务数据可导出或手动同步；API Key、同步令牌和密码仅保存在本机密钥管理器中。</p>
+        <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="secondary" onClick={async () => {
-            const stores = await import('../../db/stores');
-            const [models, chars, convs, folders, nodes, wbs, states] = await Promise.all([
-              stores.getAllModels(), stores.getAllCharacters(), stores.getAllConversations(),
-              stores.getAllConversationFolders(),
-              stores.getAllMessageNodes(),
-              stores.getAllWorldBooks(),
-              import('../../db/index').then((db) => db.globalStatesStore.getItem('data') || []),
-            ]);
-            // 安全：导出时剔除所有模型的 apiKey，防止意外分享配置文件导致 API Key 泄露。
-            const safeModels = (models as any[]).map(({ apiKey, ...rest }) => rest);
-            const blob = new Blob([JSON.stringify({ models: safeModels, characters: chars, conversations: convs, conversation_folders: folders, message_nodes: nodes, worldbooks: wbs, global_states: states }, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a'); a.href = url; a.download = 'tavern-backup.json'; a.click();
-            URL.revokeObjectURL(url);
+            downloadJsonFile(await createBackupPayload(), 'easyjiuguanpro-backup.json');
           }}>导出数据</Button>
           <Button size="sm" variant="secondary" onClick={() => {
             const input = document.createElement('input'); input.type = 'file'; input.accept = '.json';
@@ -598,11 +709,10 @@ export default function SettingsPanel() {
               const file = (e.target as HTMLInputElement).files?.[0];
               if (!file) return;
               try {
-                const text = await readFileAsTextRobust(file);
-                const data = JSON.parse(text);
+                const data = await readJsonFile(file);
                 // 安全：导入前先做表级结构校验；写入失败时回滚已写入的 store。
                 // 另：导入时清空所有 apiKey，避免从他人分享的配置中继承密钥。
-                await importBackupData(data);
+                await importBackupPayload(data);
                 alert('数据导入成功，请刷新页面。');
               } catch (err) {
                 alert(`导入失败：${err instanceof Error ? err.message : '无效的 JSON 文件'}`);
@@ -610,6 +720,8 @@ export default function SettingsPanel() {
             };
             input.click();
           }}>导入数据</Button>
+          <Button size="sm" variant="secondary" onClick={() => onOpenSyncCenter?.('sync')}>同步中心</Button>
+          <Button size="sm" variant="secondary" onClick={() => onOpenSyncCenter?.('secrets')}>密钥管理器</Button>
         </div>
       </div>
       {/* Advanced Prompt Templates */}
@@ -653,6 +765,11 @@ export default function SettingsPanel() {
               { key: 'tplDistilledNodePrefix', label: '蒸馏节点生成格式', desc: '蒸馏完成后生成的 distilled 消息节点格式。占位符：{start}, {end}, {total}, {summary}', defaultVal: DEFAULT_TPL_DISTILLED_NODE_PREFIX, rows: 2 },
               { key: 'tplCacheWorldBookPrompt', label: '状态书AI操控<缓存世界书>提示词', desc: '状态书/Galgame 兼任维护<缓存世界书>时追加的功能提示词，要求 AI 在结尾输出 JSON 读写接口。占位符：{limit}, {manualKeys}, {cacheEntries}', defaultVal: DEFAULT_TPL_CACHE_WORLD_BOOK_PROMPT, rows: 12 },
               { key: 'tplReverseEngineer', label: '高级卡逆向提示词', desc: '角色卡逆向功能使用的提示词。将世界书逆向串联为主角色提示词。占位符：{worldBook}, {originalPrompt}', defaultVal: DEFAULT_TPL_REVERSE_ENGINEER, rows: 8 },
+              { key: 'tplStickerPrompt', label: '角色表情包控制提示词', desc: '追加到已绑定角色的系统提示词末尾。{maxCount} 为玩家设置的调用数量；可用表情 JSON 由程序只读追加，不在此处开放修改。', defaultVal: DEFAULT_TPL_STICKER_PROMPT, rows: 6 },
+              { key: 'tplMvuPrompt', label: 'MVU 变量状态控制提示词', desc: '启用 MVU 后追加到角色系统提示词末尾。{state}、{schema}、{rules}、{protocol} 为程序只读注入，必须保留。旧版默认提示词会自动升级；已自行修改的内容保持不变。', defaultVal: DEFAULT_TPL_MVU_PROMPT, rows: 12 },
+              { key: 'tplMvuFallbackPrompt', label: 'DeepSeek MVU 专用维护提示词', desc: '仅当 DeepSeek 主回复未给出有效 MVU 更新时，以独立 JSON 工具调用兜底。{state}、{schema}、{rules}、{protocol}、{dialogue} 为程序只读注入，必须保留。', defaultVal: DEFAULT_TPL_MVU_FALLBACK_PROMPT, rows: 12 },
+              { key: 'tplImagePrompt', label: '智能生图提示词提炼器', desc: '用于将玩家最高优先级画面描述、锚点对话和命中的世界书整理为可编辑的中文正反提示词。{userHint}、{aspectRatio}、{style}、{character}、{context}、{worldbook} 为程序注入占位符，必须保留。', defaultVal: DEFAULT_TPL_IMAGE_PROMPT, rows: 12 },
+              { key: 'tplComfyMappingPrompt', label: 'ComfyUI AI 映射提示词', desc: '用于根据 ComfyUI API 工作流节点摘要生成映射草案。{workflow} 由程序只读注入，必须保留；生成的结果仍会经过路径与节点校验。', defaultVal: DEFAULT_TPL_COMFY_MAPPING_PROMPT, rows: 10 },
             ] as const).map((item) => (
               <div key={item.key} className="space-y-1">
                 <div className="flex items-center justify-between">
@@ -674,26 +791,42 @@ export default function SettingsPanel() {
                 />
               </div>
             ))}
+            <div className="space-y-1 rounded border border-rose-200 dark:border-rose-800/40 bg-rose-50 dark:bg-rose-950/20 p-2">
+              <label className="text-[11px] text-slate-900 dark:text-slate-100 font-medium">每次回复最多调用表情包数量</label>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={state.stickerMaxCount}
+                onChange={(event) => dispatch({ type: 'SET_STICKER_MAX_COUNT', count: Number(event.target.value) })}
+                className="w-24 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-1 text-xs text-slate-900 dark:text-slate-100"
+              />
+              <p className="text-[10px] text-slate-700 dark:text-slate-300">默认 2，由玩家自主设置。系统解析时按此数量执行，不存在隐藏的 2 条硬限制。</p>
+            </div>
           </div>
         )}
       </div>
 
+      <div className="border-b border-slate-300/60 dark:border-slate-700/60 pb-2 pt-3">
+        <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100">调试与使用须知</h4>
+        <p className="mt-1 text-[10px] text-slate-600 dark:text-slate-400">仅在排查问题或查看项目使用协议时打开。</p>
+      </div>
       {/* Debug */}
       <div className="bg-slate-800/50 rounded-lg p-3 space-y-2 border border-slate-700/50">
         <h4 className="text-xs font-semibold text-red-400 uppercase tracking-wider">⚠️ 调试功能</h4>
         <p className="text-[10px] text-slate-900 dark:text-slate-100">以下功能仅供开发调试使用，普通用户无需开启。</p>
         <div className="flex items-center justify-between">
-          <span className="text-xs text-slate-900 dark:text-slate-100">调试·原始提示词下载</span>
+          <span className="text-xs text-slate-900 dark:text-slate-100">调试·提示词与原始返回下载</span>
           <Toggle
             checked={state.debugMode}
             onChange={() => dispatch({ type: 'TOGGLE_DEBUG' })}
           />
         </div>
-        <p className="text-[10px] text-slate-900 dark:text-slate-100">开启后，AI 回复气泡底部将出现「📄 导出原始 Prompt」按钮，可下载完整 messages 数组。</p>
+        <p className="text-[10px] text-slate-900 dark:text-slate-100">开启后，AI 回复气泡底部可下载完整 Prompt，以及服务端逐条 SSE 返回 JSON（含 DeepSeek 思考字段、结束原因和 token 用量，不含 API Key）。</p>
       </div>
 
       {/* 使用声明与免责协议 */}
-      <div className="bg-slate-800/50 rounded-lg p-3 space-y-3 border border-slate-700/50">
+      <div id="usage-agreement" className="bg-slate-800/50 rounded-lg p-3 space-y-3 border border-slate-700/50">
         <button
           onClick={() => setAboutOpen(!aboutOpen)}
           className="flex items-center justify-between w-full"

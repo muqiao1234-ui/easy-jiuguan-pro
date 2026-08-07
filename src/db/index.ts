@@ -7,6 +7,12 @@ export const modelsStore = localforage.createInstance({
   storeName: DB_KEYS.models,
 });
 
+/** Local-only vault: API keys and sync credentials. It is intentionally absent from backups. */
+export const secretsStore = localforage.createInstance({
+  name: 'tavern_ai_sandbox',
+  storeName: DB_KEYS.secrets,
+});
+
 /** 角色 store */
 export const charactersStore = localforage.createInstance({
   name: 'tavern_ai_sandbox',
@@ -37,7 +43,25 @@ export const worldbooksStore = localforage.createInstance({
   storeName: DB_KEYS.worldbooks,
 });
 
+/** 本地表情包 store（Blob 由 IndexedDB 原生保存） */
+export const stickerPacksStore = localforage.createInstance({
+  name: 'tavern_ai_sandbox',
+  storeName: DB_KEYS.stickerPacks,
+});
+
 /** 全局状态 store */
+export const imageChannelsStore = localforage.createInstance({
+  name: 'tavern_ai_sandbox',
+  storeName: DB_KEYS.imageChannels,
+});
+
+/** 本机后台生图任务 store。任务不进入备份或同步。 */
+export const imageTasksStore = localforage.createInstance({
+  name: 'tavern_ai_sandbox',
+  storeName: DB_KEYS.imageTasks,
+});
+
+/** Global state store */
 export const globalStatesStore = localforage.createInstance({
   name: 'tavern_ai_sandbox',
   storeName: DB_KEYS.globalStates,
@@ -52,11 +76,15 @@ export const uiSettingsStore = localforage.createInstance({
 /** 所有 store 实例的集合 */
 export const allStores = [
   modelsStore,
+  secretsStore,
   charactersStore,
   conversationsStore,
   conversationFoldersStore,
   messageNodesStore,
   worldbooksStore,
+  stickerPacksStore,
+  imageChannelsStore,
+  imageTasksStore,
   globalStatesStore,
   uiSettingsStore,
 ] as const;

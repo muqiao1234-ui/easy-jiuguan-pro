@@ -10,8 +10,13 @@ import * as Stores from '../../db/stores';
 import Button from '../ui/Button';
 import Modal from '../ui/Modal';
 import Dropdown from '../ui/Dropdown';
+import Toggle from '../ui/Toggle';
 import Icon from '../ui/Icon';
 import EasyCharacterBuilder from './EasyCharacterBuilder';
+
+interface CharacterManagerProps {
+  onRepositoryImporterReady?: (importer: (file: File) => Promise<string>) => void;
+}
 
 /** 将图片 File 压缩为指定宽度的 base64 data URI */
 function compressImage(file: File): Promise<string> {
@@ -43,6 +48,15 @@ function compressImage(file: File): Promise<string> {
 /** 判断 avatar 是 base64 图片还是 emoji */
 function isBase64Image(s: string): boolean {
   return s.startsWith('data:image/');
+}
+
+/** 将角色卡正文压缩为列表摘要，避免把原始 XML/提示词直接铺在卡片上。 */
+function getCharacterSummary(prompt: string): string {
+  const summary = prompt
+    .replace(/<\/?[a-z][^>]*>/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return summary || '尚未填写角色简介';
 }
 
 /**
@@ -87,13 +101,13 @@ function cleanReverseOutput(raw: string): string {
   return text;
 }
 
-export default function CharacterManager() {
+export default function CharacterManager({ onRepositoryImporterReady }: CharacterManagerProps) {
   const { characters, loadCharacters, addCharacter, updateCharacter, deleteCharacter } = useCharacters();
   const { worldbooks, loadWorldBooks } = useWorldBooks();
   const { state } = useApp();
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: '', systemPrompt: '', avatar: '🤖', worldBookId: '', cacheWorldBookId: '' });
+  const [form, setForm] = useState({ name: '', systemPrompt: '', firstMessage: '', avatar: '🤖', worldBookId: '', cacheWorldBookId: '', mvuEnabled: true });
   const [uploading, setUploading] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -102,10 +116,13 @@ export default function CharacterManager() {
   const [exportStatus, setExportStatus] = useState<string>('');
   const [reverseStatus, setReverseStatus] = useState<string>('');
   const [reverseError, setReverseError] = useState<string>('');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [importing, setImporting] = useState(false);
 
   useEffect(() => { loadCharacters(); loadWorldBooks(); }, [loadCharacters, loadWorldBooks]);
 
-  const openAdd = () => { setEditingId(null); setForm({ name: '', systemPrompt: '', avatar: '🤖', worldBookId: '', cacheWorldBookId: '' }); setReverseError(''); setShowModal(true); };
+  const openAdd = () => { setEditingId(null); setForm({ name: '', systemPrompt: '', firstMessage: '', avatar: '🤖', worldBookId: '', cacheWorldBookId: '', mvuEnabled: true }); setReverseError(''); setSaveError(''); setShowModal(true); };
   const openEdit = (id: string) => {
     const c = characters.find((x) => x.id === id);
     if (!c) return;
@@ -113,33 +130,54 @@ export default function CharacterManager() {
     setForm({
       name: c.name,
       systemPrompt: c.systemPrompt,
+      firstMessage: c.firstMessage || '',
       avatar: c.avatar,
       worldBookId: c.worldBookId || '',
       cacheWorldBookId: c.cacheWorldBookId || '',
+      mvuEnabled: c.mvuEnabled ?? true,
     });
     setReverseError('');
+    setSaveError('');
     setShowModal(true);
   };
 
   const handleSave = async () => {
-    if (!form.name || !form.systemPrompt) return;
-    const updates = {
-      ...form,
-      worldBookId: form.worldBookId || undefined,
-      cacheWorldBookId: form.cacheWorldBookId || undefined,
-    };
-    if (editingId) {
-      await updateCharacter(editingId, updates);
-    } else {
-      await addCharacter(
-        form.name,
-        form.systemPrompt,
-        form.avatar,
-        form.worldBookId || undefined,
-        form.cacheWorldBookId || undefined
-      );
+    if (!form.name.trim() || !form.systemPrompt.trim()) {
+      setSaveError('角色名称和 System Prompt 不能为空');
+      return;
     }
-    setShowModal(false);
+
+    setSaving(true);
+    setSaveError('');
+    try {
+      const updates = {
+        ...form,
+        name: form.name.trim(),
+        systemPrompt: form.systemPrompt.trim(),
+        firstMessage: form.firstMessage.trim() || undefined,
+        worldBookId: form.worldBookId || undefined,
+        cacheWorldBookId: form.cacheWorldBookId || undefined,
+      };
+      if (editingId) {
+        await updateCharacter(editingId, updates);
+      } else {
+        await addCharacter(
+          updates.name,
+          updates.systemPrompt,
+          updates.avatar,
+          updates.worldBookId,
+          updates.cacheWorldBookId,
+          updates.firstMessage,
+          updates.mvuEnabled
+        );
+      }
+      setShowModal(false);
+      setEditingId(null);
+    } catch (error) {
+      setSaveError(`保存失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -157,19 +195,16 @@ export default function CharacterManager() {
     }
   };
 
-  // ─── SillyTavern 角色卡导入 ───
-  const handleImportCard = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    e.target.value = ''; // 允许重复导入同一文件
-    setImportStatus('正在解析角色卡...');
+  const importCharacterCard = async (file: File): Promise<string> => {
+    let importedWorldBookId: string | null = null;
+    let characterSaved = false;
     try {
       const result = await importSillyTavernCard(file);
 
       // 保存世界书（如果有）
       if (result.worldBook) {
         await Stores.addWorldBook(result.worldBook);
-        await loadWorldBooks();
+        importedWorldBookId = result.worldBook.id;
       }
 
       // 保存角色
@@ -177,19 +212,79 @@ export default function CharacterManager() {
         result.character.name,
         result.character.systemPrompt,
         result.character.avatar,
-        result.character.worldBookId
+        result.character.worldBookId,
+        undefined,
+        result.character.firstMessage,
+        result.character.mvuEnabled
       );
+      characterSaved = true;
+      await loadWorldBooks();
 
       const wbInfo = result.worldBookEntryCount > 0
         ? `，并导入了 ${result.worldBookEntryCount} 条世界书词条`
         : '';
-      setImportStatus(`✅ 成功导入角色「${result.character.name}」${wbInfo}`);
-      setTimeout(() => setImportStatus(''), 5000);
+      const skippedInfo = result.skippedWorldBookEntryCount > 0
+        ? `（跳过 ${result.skippedWorldBookEntryCount} 条禁用或无效词条）`
+        : '';
+      const greetingInfo = result.character.firstMessage
+        ? (result.usedAlternateGreeting ? '，已使用备用开场白' : '，已导入开场白')
+        : '';
+      const exampleInfo = result.importedExampleDialogue ? '，已导入示例对话' : '';
+      const compatibilityInfo = result.compatibilityWarnings.length > 0
+        ? `。兼容提醒：${result.compatibilityWarnings.join('；')}`
+        : '';
+      return `✅ 成功导入角色「${result.character.name}」${wbInfo}${skippedInfo}${greetingInfo}${exampleInfo}${compatibilityInfo}`;
+    } catch (err: any) {
+      if (importedWorldBookId && !characterSaved) {
+        try {
+          await Stores.deleteWorldBook(importedWorldBookId);
+          await loadWorldBooks();
+        } catch (rollbackError) {
+          console.error('角色卡导入回滚失败:', rollbackError);
+        }
+      }
+      throw err;
+    }
+  };
+
+  // ─── SillyTavern 角色卡导入 ───
+  const handleImportCard = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || importing) return;
+    e.target.value = ''; // 允许重复导入同一文件
+    setImportStatus('正在解析角色卡...');
+    setImporting(true);
+    try {
+      setImportStatus(await importCharacterCard(file));
     } catch (err: any) {
       setImportStatus(`❌ 导入失败: ${err.message || err}`);
+    } finally {
+      setImporting(false);
       setTimeout(() => setImportStatus(''), 5000);
     }
   };
+
+  const handleRepositoryImport = async (file: File): Promise<string> => {
+    if (importing) throw new Error('当前已有角色卡正在导入，请稍后再试。');
+    setImporting(true);
+    setImportStatus(`正在导入远端角色卡「${file.name}」...`);
+    try {
+      const result = await importCharacterCard(file);
+      setImportStatus(result);
+      return result;
+    } catch (err: any) {
+      const message = `❌ 导入失败: ${err.message || err}`;
+      setImportStatus(message);
+      throw new Error(message);
+    } finally {
+      setImporting(false);
+      setTimeout(() => setImportStatus(''), 5000);
+    }
+  };
+
+  useEffect(() => {
+    onRepositoryImporterReady?.(handleRepositoryImport);
+  }, [onRepositoryImporterReady, handleRepositoryImport]);
 
   // ─── SillyTavern 角色卡导出 ───
   const handleExportCard = async (charId: string) => {
@@ -353,6 +448,8 @@ export default function CharacterManager() {
             size="sm"
             variant="secondary"
             onClick={() => importRef.current?.click()}
+            loading={importing}
+            disabled={importing}
             title="导入 SillyTavern 角色卡 (.png / .json)"
           >
             <Icon name="plus" size={14} /> 导入角色卡
@@ -361,9 +458,13 @@ export default function CharacterManager() {
         </div>
       </div>
 
+      <div className="space-y-2">
       {/* Easy人物卡入口 */}
       <button
-        onClick={() => setEasyBuilderOpen(true)}
+        onClick={() => {
+          setEditingId(null);
+          setEasyBuilderOpen(true);
+        }}
         className="w-full flex items-center justify-between px-3 py-2.5 text-sm bg-amber-900/20 border border-amber-700/40 rounded-lg transition-colors hover:bg-amber-900/10"
       >
         <span className="flex items-center gap-2 text-amber-400 font-medium">
@@ -379,8 +480,8 @@ export default function CharacterManager() {
         </div>
       )}
 
-      {characters.map((c) => (
-        <div key={c.id} className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
+      {characters.map((c, index) => (
+        <div key={`${c.id}-${index}`} className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               {isBase64Image(c.avatar) ? (
@@ -396,7 +497,7 @@ export default function CharacterManager() {
               <button onClick={() => setDeleteConfirmId(c.id)} className="text-slate-500 hover:text-red-400 p-0.5"><Icon name="trash" size={14} /></button>
             </div>
           </div>
-          <div className="text-xs text-slate-500 mt-1 line-clamp-2">{c.systemPrompt}</div>
+          <div className="text-xs text-slate-500 mt-1 line-clamp-2" title={c.systemPrompt}>{getCharacterSummary(c.systemPrompt)}</div>
           {(c.worldBookId || c.cacheWorldBookId) && (
             <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
               {c.worldBookId && (
@@ -413,6 +514,7 @@ export default function CharacterManager() {
           )}
         </div>
       ))}
+      </div>
 
       <Modal open={showModal} onClose={() => setShowModal(false)} title={editingId ? '编辑角色' : '添加角色'}>
         <div className="space-y-3">
@@ -475,6 +577,11 @@ export default function CharacterManager() {
           </div>
 
           <div>
+            <label className="block text-xs text-slate-400 mb-1">第一句预设对话（可选）</label>
+            <textarea className="input-field min-h-[90px]" value={form.firstMessage} onChange={(e) => setForm({ ...form, firstMessage: e.target.value })} placeholder="空白对话首次加载该角色时显示的开场白..." />
+          </div>
+
+          <div>
             <label className="block text-xs text-slate-400 mb-1">绑定 A 世界书（手动世界书）</label>
             <Dropdown options={wbOptions} value={form.worldBookId} onChange={(v) => setForm({ ...form, worldBookId: v })} placeholder="无世界书" />
           </div>
@@ -487,6 +594,15 @@ export default function CharacterManager() {
               onChange={(v) => setForm({ ...form, cacheWorldBookId: v })}
               placeholder="无缓存世界书"
             />
+          </div>
+
+          <div className="rounded-lg border border-cyan-700/40 bg-cyan-950/20 p-3">
+            <Toggle
+              checked={form.mvuEnabled}
+              onChange={(enabled) => setForm({ ...form, mvuEnabled: enabled })}
+              label="创建对话时自动启用 MVU"
+            />
+            <p className="mt-1 text-[10px] leading-relaxed text-slate-400">开启后会在加载预设第一句话前启用 MVU，并解析其中的状态更新。导入酒馆 V2 卡默认开启。</p>
           </div>
 
           {/* 高级卡逆向 — 仅编辑模式 + 已绑定世界书时显示 */}
@@ -517,9 +633,14 @@ export default function CharacterManager() {
             </div>
           )}
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="secondary" onClick={() => setShowModal(false)}>取消</Button>
-            <Button onClick={handleSave}>{editingId ? '保存' : '添加'}</Button>
+            <Button variant="secondary" onClick={() => setShowModal(false)} disabled={saving}>取消</Button>
+            <Button onClick={handleSave} loading={saving}>{editingId ? '保存' : '添加'}</Button>
           </div>
+          {saveError && (
+            <div className="text-xs text-red-300 bg-red-950/40 border border-red-700/50 rounded-md px-3 py-2">
+              {saveError}
+            </div>
+          )}
         </div>
       </Modal>
 
@@ -563,15 +684,8 @@ export default function CharacterManager() {
       <EasyCharacterBuilder
         open={easyBuilderOpen}
         onClose={() => setEasyBuilderOpen(false)}
-        onSave={(prompt) => {
-          // 拼装结果写入当前编辑表单（若编辑弹窗打开）或新建角色
-          if (editingId) {
-            setForm((prev) => ({ ...prev, systemPrompt: prompt }));
-          } else {
-            // 未在编辑模式时，打开编辑弹窗并填入
-            setForm((prev) => ({ ...prev, systemPrompt: prompt, name: prev.name || '新角色' }));
-            setShowModal(true);
-          }
+        onSave={async (name, prompt, firstMessage) => {
+          await addCharacter(name, prompt, '🤖', undefined, undefined, firstMessage);
         }}
       />
     </div>

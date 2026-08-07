@@ -3,6 +3,10 @@ node_modules/
 
 # Build output
 dist/
+dist-preview/
+
+# Package manager cache
+.pnpm-store/
 
 # WorkBuddy workspace data
 .workbuddy/

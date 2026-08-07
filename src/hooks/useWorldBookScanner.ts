@@ -30,6 +30,10 @@ export function useWorldBookScanner() {
         const matched: WorldBookEntry[] = [];
 
         for (const entry of wb.entries) {
+          if (entry.alwaysActive) {
+            matched.push(entry);
+            continue;
+          }
           for (const key of entry.keys) {
             if (!key) continue;
             // 1) 快速路径：直接字面量包含（大小写无关），覆盖绝大多数场景，

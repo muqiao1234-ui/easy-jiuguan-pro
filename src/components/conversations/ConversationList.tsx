@@ -3,7 +3,6 @@ import type { Conversation, ConversationFolder, Character } from '../../types';
 import * as Stores from '../../db/stores';
 import Button from '../ui/Button';
 import Modal from '../ui/Modal';
-import Dropdown from '../ui/Dropdown';
 import Icon from '../ui/Icon';
 
 interface ConversationListProps {
@@ -11,7 +10,7 @@ interface ConversationListProps {
   folders: ConversationFolder[];
   characters: Character[];
   currentConversation: Conversation | null;
-  onCreateConversation: (title: string, characterAId: string, characterBId: string) => Promise<Conversation>;
+  onCreateConversation: (title: string, characterAId: string, characterBId: string, userName: string, userDescription: string) => Promise<Conversation>;
   onDeleteConversation: (id: string) => Promise<void>;
   onCreateFolder: (name: string) => Promise<ConversationFolder | null>;
   onRenameFolder: (id: string, name: string) => Promise<void>;
@@ -43,6 +42,9 @@ export default function ConversationList({
   const [folderName, setFolderName] = useState('');
   const [charAId, setCharAId] = useState('');
   const [charBId, setCharBId] = useState('');
+  const [activeRoleSlot, setActiveRoleSlot] = useState<'A' | 'B'>('A');
+  const [userName, setUserName] = useState('');
+  const [userDescription, setUserDescription] = useState('');
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [deleteFolderConfirmId, setDeleteFolderConfirmId] = useState<string | null>(null);
   const [manageFolderId, setManageFolderId] = useState<string | null>(null);
@@ -79,12 +81,15 @@ export default function ConversationList({
     : [];
   const availableConversations = conversations.filter((conv) => !folderedIds.has(conv.id));
 
-  const charOptions = characters.map((c) => ({ value: c.id, label: c.name }));
+  const selectedCharA = characters.find((character) => character.id === charAId);
+  const selectedCharB = characters.find((character) => character.id === charBId);
 
   const handleCreate = async () => {
     if (!title.trim() || !charAId || !charBId) return;
-    await onCreateConversation(title.trim(), charAId, charBId);
+    await onCreateConversation(title.trim(), charAId, charBId, userName, userDescription);
     setTitle('');
+    setUserName('');
+    setUserDescription('');
     setShowCreateModal(false);
   };
 
@@ -271,7 +276,7 @@ export default function ConversationList({
           >
             <Icon name="folder" size={14} /> 文件夹
           </Button>
-          <Button size="sm" onClick={() => { setShowCreateModal(true); setTitle(''); setCharAId(''); setCharBId(''); }}>
+          <Button size="sm" onClick={() => { setShowCreateModal(true); setTitle(''); setCharAId(''); setCharBId(''); setUserName(''); setUserDescription(''); setActiveRoleSlot('A'); }}>
             <Icon name="plus" size={14} /> 对话
           </Button>
         </div>
@@ -302,22 +307,110 @@ export default function ConversationList({
       )}
 
       <Modal open={showCreateModal} onClose={() => setShowCreateModal(false)} title="新建对话">
-        <div className="space-y-3">
+        <div className="space-y-4">
           <div>
             <label className="block text-xs text-slate-400 mb-1">对话标题</label>
             <input className="input-field" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="例如：酒馆夜谈" />
           </div>
-          <div>
-            <label className="block text-xs text-slate-400 mb-1">角色 A</label>
-            <Dropdown options={charOptions} value={charAId} onChange={setCharAId} placeholder="选择角色A" />
+
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs text-slate-400">用户名称（替换 {'{{user}}'}）</label>
+              <input
+                className="input-field"
+                value={userName}
+                maxLength={64}
+                onChange={(event) => setUserName(event.target.value)}
+                placeholder="例如：旅行者"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-slate-400">一句话描述（可选）</label>
+              <input
+                className="input-field"
+                value={userDescription}
+                maxLength={240}
+                onChange={(event) => setUserDescription(event.target.value)}
+                placeholder="例如：来自异乡的炼金术师"
+              />
+            </div>
           </div>
-          <div>
-            <label className="block text-xs text-slate-400 mb-1">角色 B</label>
-            <Dropdown options={charOptions} value={charBId} onChange={setCharBId} placeholder="选择角色B" />
+
+          <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-2" role="group" aria-label="选择要绑定的角色栏位">
+              <button
+                type="button"
+                onClick={() => setActiveRoleSlot('A')}
+                aria-pressed={activeRoleSlot === 'A'}
+                className={`min-w-0 rounded-lg border px-3 py-2 text-left transition-colors ${
+                  activeRoleSlot === 'A'
+                    ? 'border-emerald-400 bg-emerald-500/15 text-emerald-100'
+                    : 'border-slate-700 bg-slate-800/60 text-slate-300 hover:border-slate-600'
+                }`}
+              >
+                <span className="block text-[10px] text-emerald-300/80">角色 A</span>
+                <span className="mt-0.5 block truncate text-sm font-medium">{selectedCharA?.name || '请选择角色 A'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveRoleSlot('B')}
+                aria-pressed={activeRoleSlot === 'B'}
+                className={`min-w-0 rounded-lg border px-3 py-2 text-left transition-colors ${
+                  activeRoleSlot === 'B'
+                    ? 'border-violet-400 bg-violet-500/15 text-violet-100'
+                    : 'border-slate-700 bg-slate-800/60 text-slate-300 hover:border-slate-600'
+                }`}
+              >
+                <span className="block text-[10px] text-violet-300/80">角色 B</span>
+                <span className="mt-0.5 block truncate text-sm font-medium">{selectedCharB?.name || '请选择角色 B'}</span>
+              </button>
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-xs text-slate-400">选择角色 {activeRoleSlot}</label>
+              {characters.length > 0 ? (
+                <div className="grid gap-1.5 sm:grid-cols-2">
+                  {characters.map((character) => {
+                    const selected = activeRoleSlot === 'A' ? charAId === character.id : charBId === character.id;
+                    return (
+                      <button
+                        key={character.id}
+                        type="button"
+                        onClick={() => {
+                          if (activeRoleSlot === 'A') {
+                            setCharAId(character.id);
+                            setActiveRoleSlot('B');
+                          } else {
+                            setCharBId(character.id);
+                          }
+                        }}
+                        className={`flex min-w-0 items-center gap-2 rounded-md border px-2.5 py-2 text-left text-sm transition-colors ${
+                          selected
+                            ? activeRoleSlot === 'A'
+                              ? 'border-emerald-400 bg-emerald-500/15 text-emerald-100'
+                              : 'border-violet-400 bg-violet-500/15 text-violet-100'
+                            : 'border-slate-700 bg-slate-800/50 text-slate-200 hover:border-slate-600 hover:bg-slate-800'
+                        }`}
+                      >
+                        <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center overflow-hidden rounded-full border border-slate-600 bg-slate-700 text-sm">
+                          {character.avatar?.startsWith('data:image/') ? (
+                            <img src={character.avatar} alt="" className="h-full w-full object-cover" />
+                          ) : character.avatar}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate">{character.name}</span>
+                        {selected && <span className="text-[10px] font-medium">已选择</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="rounded-md border border-dashed border-slate-700 px-3 py-3 text-xs text-slate-500">暂无角色，请先到“角色”页面创建角色卡。</div>
+              )}
+            </div>
           </div>
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="secondary" onClick={() => setShowCreateModal(false)}>取消</Button>
-            <Button onClick={handleCreate}>创建</Button>
+            <Button onClick={handleCreate} disabled={!title.trim() || !charAId || !charBId}>创建</Button>
           </div>
         </div>
       </Modal>

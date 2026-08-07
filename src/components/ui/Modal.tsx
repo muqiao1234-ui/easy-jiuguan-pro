@@ -47,7 +47,7 @@ export default function Modal({ open, onClose, title, children, maxWidth = 'max-
           </button>
         </div>
         {/* Body */}
-        <div className="px-6 py-4 max-h-[70vh] overflow-y-auto">{children}</div>
+        <div className="min-w-0 overflow-x-hidden px-6 py-4 max-h-[70vh] overflow-y-auto">{children}</div>
       </div>
     </div>,
     document.body

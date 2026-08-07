@@ -1,11 +1,15 @@
 import type LocalForage from 'localforage';
 import {
   modelsStore,
+  secretsStore,
   charactersStore,
   conversationsStore,
   conversationFoldersStore,
   messageNodesStore,
   worldbooksStore,
+  stickerPacksStore,
+  imageChannelsStore,
+  imageTasksStore,
   globalStatesStore,
   uiSettingsStore,
 } from './index';
@@ -20,7 +24,13 @@ import type {
   ContextAssemblyConfig,
   WorldBook,
   GlobalState,
+  StickerPack,
+  ImageChannel,
+  ImageGenerationTask,
+  GitHubCharacterRepository,
+  ModuleRpgConfig,
 } from '../types';
+import { generateId } from '../utils/id';
 
 /* ──────────────── 泛型辅助 ──────────────── */
 
@@ -60,6 +70,11 @@ async function getStoreData<T>(store: LocalForage): Promise<T[]> {
   }
 }
 
+async function getStoreDataForMutation<T>(store: LocalForage): Promise<T[]> {
+  const data = await store.getItem<T[]>('data');
+  return Array.isArray(data) ? data : [];
+}
+
 async function setStoreData<T>(store: LocalForage, data: T[]): Promise<void> {
   try {
     await store.setItem('data', data);
@@ -78,16 +93,134 @@ async function mutateStore<T>(
   fn: (data: T[]) => T[] | Promise<T[]>
 ): Promise<void> {
   return withStoreLock(store, async () => {
-    const data = await getStoreData<T>(store);
+    // A failed read must abort the mutation; treating it as an empty store can erase existing data.
+    const data = await getStoreDataForMutation<T>(store);
     const next = await fn(data);
     await setStoreData(store, next);
   });
 }
 
+/* ──────────────── Local secret vault ──────────────── */
+
+export type SecretKind = 'apiKey' | 'syncToken' | 'syncPassword';
+
+export interface SecretEntry {
+  id: string;
+  name: string;
+  kind: SecretKind;
+  value: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type SyncProvider = 'local' | 'webdav' | 'gist' | 'onedrive' | 'dropbox';
+
+/** Non-secret sync preferences live beside the vault, but never enter a business backup. */
+export interface SyncSettings {
+  provider: SyncProvider;
+  deviceId?: string;
+  remotePath?: string;
+  webdavUrl?: string;
+  webdavUsernameSecretId?: string;
+  webdavPasswordSecretId?: string;
+  gistId?: string;
+  gistTokenSecretId?: string;
+  onedriveClientId?: string;
+  onedriveAccessTokenSecretId?: string;
+  onedriveRefreshTokenSecretId?: string;
+  onedriveExpiresAt?: number;
+  dropboxClientId?: string;
+  dropboxAccessTokenSecretId?: string;
+  dropboxRefreshTokenSecretId?: string;
+  dropboxExpiresAt?: number;
+  remoteRevision?: string;
+  /** Provider-level ETag/revision for conditional writes. */
+  remoteProviderRevision?: string;
+  lastUploadedAt?: number;
+  lastDownloadedAt?: number;
+}
+
+interface SecretVault {
+  secrets: SecretEntry[];
+  sync: SyncSettings;
+}
+
+const EMPTY_VAULT: SecretVault = { secrets: [], sync: { provider: 'local' } };
+
+async function getSecretVault(): Promise<SecretVault> {
+  const stored = await secretsStore.getItem<SecretVault>('vault');
+  return {
+    secrets: Array.isArray(stored?.secrets) ? stored!.secrets.filter((item) => item && typeof item.id === 'string') : [],
+    sync: stored?.sync && typeof stored.sync === 'object'
+      ? { ...stored.sync, provider: stored.sync.provider || 'local' }
+      : { ...EMPTY_VAULT.sync },
+  };
+}
+
+async function mutateSecretVault(updater: (vault: SecretVault) => SecretVault): Promise<void> {
+  await withStoreLock(secretsStore, async () => {
+    const vault = await getSecretVault();
+    await secretsStore.setItem('vault', updater(vault));
+  });
+}
+
+export async function getAllSecrets(kind?: SecretKind): Promise<SecretEntry[]> {
+  const secrets = (await getSecretVault()).secrets;
+  return kind ? secrets.filter((secret) => secret.kind === kind) : secrets;
+}
+
+export async function getSecretById(id?: string): Promise<SecretEntry | undefined> {
+  if (!id) return undefined;
+  return (await getSecretVault()).secrets.find((secret) => secret.id === id);
+}
+
+export async function createSecret(name: string, value: string, kind: SecretKind = 'apiKey'): Promise<SecretEntry> {
+  const now = Date.now();
+  const secret: SecretEntry = { id: generateId(), name: name.trim() || 'Unnamed secret', kind, value, createdAt: now, updatedAt: now };
+  await mutateSecretVault((vault) => ({ ...vault, secrets: [...vault.secrets, secret] }));
+  return secret;
+}
+
+export async function updateSecret(id: string, updates: Pick<Partial<SecretEntry>, 'name' | 'value'>): Promise<void> {
+  await mutateSecretVault((vault) => ({
+    ...vault,
+    secrets: vault.secrets.map((secret) => secret.id === id
+      ? { ...secret, ...updates, updatedAt: Date.now() }
+      : secret),
+  }));
+}
+
+export async function deleteSecret(id: string): Promise<void> {
+  await mutateSecretVault((vault) => ({ ...vault, secrets: vault.secrets.filter((secret) => secret.id !== id) }));
+}
+
+export async function getSyncSettings(): Promise<SyncSettings> {
+  return (await getSecretVault()).sync;
+}
+
+export async function setSyncSettings(updates: Partial<SyncSettings>): Promise<void> {
+  await mutateSecretVault((vault) => ({ ...vault, sync: { ...vault.sync, ...updates } }));
+}
+
+/** Returns model references that would break if a named secret is removed. */
+export async function getSecretModelReferences(id: string): Promise<ModelConfig[]> {
+  const models = await getStoreData<ModelConfig>(modelsStore);
+  return models.filter((model) => model.secretId === id);
+}
+
+/** Returns image channels that would lose their local credential if a secret is removed. */
+export async function getSecretImageChannelReferences(id: string): Promise<ImageChannel[]> {
+  const channels = await getStoreData<ImageChannel>(imageChannelsStore);
+  return channels.filter((channel) => channel.secretId === id);
+}
+
 /* ──────────────── Models ──────────────── */
 
 export async function getAllModels(): Promise<ModelConfig[]> {
-  return getStoreData<ModelConfig>(modelsStore);
+  await migrateLegacyModelKeys();
+  const [models, secrets] = await Promise.all([getStoreData<ModelConfig>(modelsStore), getAllSecrets('apiKey')]);
+  const secretById = new Map(secrets.map((secret) => [secret.id, secret.value]));
+  return models.map((model) => ({ ...model, apiKey: model.secretId ? (secretById.get(model.secretId) || '') : '' }));
 }
 
 export async function getModelById(id: string): Promise<ModelConfig | undefined> {
@@ -97,7 +230,8 @@ export async function getModelById(id: string): Promise<ModelConfig | undefined>
 
 export async function addModel(model: ModelConfig): Promise<void> {
   await mutateStore<ModelConfig>(modelsStore, (data) => {
-    data.push(model);
+    const { apiKey: _apiKey, ...persisted } = model;
+    data.push({ ...persisted, apiKey: '' });
     return data;
   });
 }
@@ -109,10 +243,27 @@ export async function updateModel(
   await mutateStore<ModelConfig>(modelsStore, (data) => {
     const idx = data.findIndex((m) => m.id === id);
     if (idx !== -1) {
-      data[idx] = { ...data[idx], ...updates };
+      const { apiKey: _apiKey, ...persistedUpdates } = updates;
+      data[idx] = { ...data[idx], ...persistedUpdates, apiKey: '' };
     }
     return data;
   });
+}
+
+/** Moves old inline API keys into the local vault exactly once, preserving existing models. */
+async function migrateLegacyModelKeys(): Promise<void> {
+  const models = await getStoreData<ModelConfig>(modelsStore);
+  const legacy = models.filter((model) => !model.secretId && typeof model.apiKey === 'string' && model.apiKey.trim());
+  if (legacy.length === 0) return;
+  const created = new Map<string, string>();
+  for (const model of legacy) {
+    const secret = await createSecret(`${model.name || 'Model'} API Key`, model.apiKey.trim(), 'apiKey');
+    created.set(model.id, secret.id);
+  }
+  await mutateStore<ModelConfig>(modelsStore, (current) => current.map((model) => {
+    const secretId = created.get(model.id);
+    return secretId ? { ...model, secretId, apiKey: '' } : model;
+  }));
 }
 
 export async function deleteModel(id: string): Promise<void> {
@@ -255,6 +406,7 @@ export async function deleteConversationFolder(id: string): Promise<void> {
 const MESSAGE_NODE_VERSION_KEY = '__message_nodes_v3__';
 const MESSAGE_NODE_INDEX_PREFIX = 'conversation_index:';
 const MESSAGE_NODE_PREFIX = 'node:';
+const MESSAGE_NODE_PRESET_GREETING_PREFIX = 'preset_greeting_initialized:';
 let messageNodeMigration: Promise<void> | null = null;
 
 interface MessageNodeIndexItem {
@@ -281,6 +433,10 @@ function messageNodeIndexKey(conversationId: string): string {
 
 function messageNodeKey(id: string): string {
   return `${MESSAGE_NODE_PREFIX}${id}`;
+}
+
+function messageNodePresetGreetingKey(conversationId: string): string {
+  return `${MESSAGE_NODE_PRESET_GREETING_PREFIX}${conversationId}`;
 }
 
 function sortMessageNodeIndex(items: MessageNodeIndexItem[]): MessageNodeIndexItem[] {
@@ -539,6 +695,34 @@ export async function addMessageNodes(nodes: MessageNode[]): Promise<void> {
   });
 }
 
+/**
+ * Initializes a blank conversation with character preset messages exactly once.
+ * The empty check and writes share the message-store lock, so remounts and
+ * concurrent renders cannot duplicate fake opening bubbles.
+ */
+export async function addPresetGreetingNodesIfEmpty(nodes: MessageNode[]): Promise<boolean> {
+  if (nodes.length === 0) return false;
+  const conversationId = nodes[0].conversationId;
+  if (!conversationId || nodes.some((node) => node.conversationId !== conversationId)) {
+    throw new Error('预设对话必须属于同一会话');
+  }
+
+  await ensureMessageNodesV3();
+  return withStoreLock(messageNodesStore, async () => {
+    const [initialized, index] = await Promise.all([
+      messageNodesStore.getItem<boolean>(messageNodePresetGreetingKey(conversationId)),
+      getMessageNodeIndex(conversationId),
+    ]);
+    if (initialized || index.length > 0) return false;
+
+    await Promise.all(nodes.map((node) => messageNodesStore.setItem(messageNodeKey(node.id), node)));
+    index.push(...nodes.map(toMessageNodeIndexItem));
+    await messageNodesStore.setItem(messageNodeIndexKey(conversationId), sortMessageNodeIndex(index));
+    await messageNodesStore.setItem(messageNodePresetGreetingKey(conversationId), true);
+    return true;
+  });
+}
+
 export async function updateMessageNode(
   id: string,
   updates: Partial<MessageNode>
@@ -589,6 +773,7 @@ export async function deleteMessageNodesByConversation(
     const index = await getMessageNodeIndex(conversationId);
     await Promise.all(index.map((item) => messageNodesStore.removeItem(messageNodeKey(item.id))));
     await messageNodesStore.removeItem(messageNodeIndexKey(conversationId));
+    await messageNodesStore.removeItem(messageNodePresetGreetingKey(conversationId));
     return index.length;
   });
 }
@@ -683,7 +868,93 @@ export async function deleteWorldBook(id: string): Promise<void> {
   );
 }
 
+/* ──────────────── Sticker Packs ──────────────── */
+
+export async function getAllStickerPacks(): Promise<StickerPack[]> {
+  return getStoreData<StickerPack>(stickerPacksStore);
+}
+
+export async function addStickerPack(pack: StickerPack): Promise<void> {
+  await mutateStore<StickerPack>(stickerPacksStore, (data) => {
+    if (data.some((item) => item.id === pack.id)) throw new Error('表情包 ID 已存在');
+    return [...data, pack];
+  });
+}
+
+export async function updateStickerPack(id: string, updates: Partial<StickerPack>): Promise<void> {
+  await mutateStore<StickerPack>(stickerPacksStore, (data) => {
+    if (!data.some((item) => item.id === id)) throw new Error('表情包不存在');
+    return data.map((item) => item.id === id ? { ...item, ...updates, id: item.id } : item);
+  });
+}
+
+export async function deleteStickerPack(id: string): Promise<void> {
+  await mutateStore<StickerPack>(stickerPacksStore, (data) => data.filter((item) => item.id !== id));
+  await mutateStore<Conversation>(conversationsStore, (data) => data.map((conversation) => {
+    if (conversation.stickerPackAId !== id && conversation.stickerPackBId !== id) return conversation;
+    const next = { ...conversation };
+    if (next.stickerPackAId === id) delete next.stickerPackAId;
+    if (next.stickerPackBId === id) delete next.stickerPackBId;
+    return next;
+  }));
+}
+
+export async function replaceAllStickerPacks(packs: StickerPack[]): Promise<void> {
+  await withStoreLock(stickerPacksStore, () => setStoreData(stickerPacksStore, packs));
+}
+
 /* ──────────────── Global States ──────────────── */
+
+/* ---------------- Image channels ---------------- */
+
+export async function getAllImageChannels(): Promise<ImageChannel[]> {
+  return getStoreData<ImageChannel>(imageChannelsStore);
+}
+
+export async function addImageChannel(channel: ImageChannel): Promise<void> {
+  await mutateStore<ImageChannel>(imageChannelsStore, (data) => {
+    if (data.some((item) => item.id === channel.id)) throw new Error('生图渠道 ID 已存在');
+    return [...data, channel];
+  });
+}
+
+export async function updateImageChannel(id: string, updates: Partial<ImageChannel>): Promise<void> {
+  await mutateStore<ImageChannel>(imageChannelsStore, (data) => data.map((item) =>
+    item.id === id ? { ...item, ...updates, id: item.id, createdAt: item.createdAt } : item
+  ));
+}
+
+export async function deleteImageChannel(id: string): Promise<void> {
+  await mutateStore<ImageChannel>(imageChannelsStore, (data) => data.filter((item) => item.id !== id));
+}
+
+export async function replaceAllImageChannels(channels: ImageChannel[]): Promise<void> {
+  await withStoreLock(imageChannelsStore, () => setStoreData(imageChannelsStore, channels));
+}
+
+/* ---------------- Local image generation tasks ---------------- */
+
+export async function getAllImageGenerationTasks(): Promise<ImageGenerationTask[]> {
+  const tasks = await getStoreData<ImageGenerationTask>(imageTasksStore);
+  return tasks.sort((a, b) => a.updatedAt - b.updatedAt);
+}
+
+export async function addImageGenerationTask(task: ImageGenerationTask): Promise<void> {
+  await mutateStore<ImageGenerationTask>(imageTasksStore, (data) => {
+    if (data.some((item) => item.id === task.id)) throw new Error('生图任务 ID 已存在');
+    return [...data, task];
+  });
+}
+
+export async function updateImageGenerationTask(id: string, updates: Partial<ImageGenerationTask>): Promise<void> {
+  await mutateStore<ImageGenerationTask>(imageTasksStore, (data) => data.map((item) =>
+    item.id === id ? { ...item, ...updates, id: item.id, createdAt: item.createdAt, updatedAt: Date.now() } : item
+  ));
+}
+
+export async function deleteImageGenerationTask(id: string): Promise<void> {
+  await mutateStore<ImageGenerationTask>(imageTasksStore, (data) => data.filter((item) => item.id !== id));
+}
 
 export async function getGlobalStateByConversation(
   conversationId: string
@@ -741,18 +1012,25 @@ export interface UISettings {
     overlayMode: 'light' | 'dark';
   };
   boldColorize?: boolean;
-  scribeEngine?: 'text' | 'galgame';
+  scribeEngine?: 'module' | 'text' | 'galgame';
   scribeMode?: 'charA' | 'charB' | 'auto';
   galgamePrompt?: string;
+  moduleRpgConfig?: ModuleRpgConfig;
+  moduleRpgPrompt?: string;
   mutualObservePrompt?: string;
   charAModelId?: string | null;
   charBModelId?: string | null;
   thinkingEnabled?: boolean;
+  streamingEnabled?: boolean;
   debugMode?: boolean;
   scribeEnabled?: boolean;
   scribeCacheWorldBookEnabled?: boolean;
+  mvuEnabled?: boolean;
   scribeRounds?: number;
   lowRateMode?: boolean;
+  stickerEnabled?: boolean;
+  stickerMaxCount?: number;
+  characterCardRepositories?: GitHubCharacterRepository[];
   distillationConfig?: DistillationConfig;
   contextConfig?: ContextAssemblyConfig;
   // 高级提示词模板（空=用默认）
@@ -769,6 +1047,13 @@ export interface UISettings {
   tplDistilledNodePrefix?: string;
   tplCacheWorldBookPrompt?: string;
   tplReverseEngineer?: string;
+  tplStickerPrompt?: string;
+  tplMvuPrompt?: string;
+  tplMvuFallbackPrompt?: string;
+  tplImagePrompt?: string;
+  tplComfyMappingPrompt?: string;
+  currentImageChannelId?: string | null;
+  currentImagePromptModelId?: string | null;
 }
 
 export async function getUISettings(): Promise<UISettings | null> {
@@ -796,15 +1081,24 @@ export async function setUISettings(settings: Partial<UISettings>): Promise<void
         scribeEngine: settings.scribeEngine ?? existing.scribeEngine,
         scribeMode: settings.scribeMode ?? existing.scribeMode,
         galgamePrompt: settings.galgamePrompt ?? existing.galgamePrompt,
+        moduleRpgConfig: settings.moduleRpgConfig ?? existing.moduleRpgConfig,
+        moduleRpgPrompt: settings.moduleRpgPrompt ?? existing.moduleRpgPrompt,
         mutualObservePrompt: settings.mutualObservePrompt ?? existing.mutualObservePrompt,
         charAModelId: settings.charAModelId ?? existing.charAModelId,
         charBModelId: settings.charBModelId ?? existing.charBModelId,
         thinkingEnabled: settings.thinkingEnabled ?? existing.thinkingEnabled,
+        streamingEnabled: settings.streamingEnabled ?? existing.streamingEnabled,
         debugMode: settings.debugMode ?? existing.debugMode,
         scribeEnabled: settings.scribeEnabled ?? existing.scribeEnabled,
         scribeCacheWorldBookEnabled: settings.scribeCacheWorldBookEnabled ?? existing.scribeCacheWorldBookEnabled,
+        mvuEnabled: settings.mvuEnabled ?? existing.mvuEnabled,
         scribeRounds: settings.scribeRounds ?? existing.scribeRounds,
         lowRateMode: settings.lowRateMode ?? existing.lowRateMode,
+        stickerEnabled: settings.stickerEnabled ?? existing.stickerEnabled,
+        stickerMaxCount: settings.stickerMaxCount ?? existing.stickerMaxCount,
+        currentImageChannelId: settings.currentImageChannelId ?? existing.currentImageChannelId,
+        currentImagePromptModelId: settings.currentImagePromptModelId ?? existing.currentImagePromptModelId,
+        characterCardRepositories: settings.characterCardRepositories ?? existing.characterCardRepositories,
         distillationConfig: settings.distillationConfig ?? existing.distillationConfig,
         contextConfig: settings.contextConfig ?? existing.contextConfig,
         tplUserWrapper: settings.tplUserWrapper ?? existing.tplUserWrapper,
@@ -820,6 +1114,11 @@ export async function setUISettings(settings: Partial<UISettings>): Promise<void
         tplDistilledNodePrefix: settings.tplDistilledNodePrefix ?? existing.tplDistilledNodePrefix,
         tplCacheWorldBookPrompt: settings.tplCacheWorldBookPrompt ?? existing.tplCacheWorldBookPrompt,
         tplReverseEngineer: settings.tplReverseEngineer ?? existing.tplReverseEngineer,
+        tplStickerPrompt: settings.tplStickerPrompt ?? existing.tplStickerPrompt,
+        tplMvuPrompt: settings.tplMvuPrompt ?? existing.tplMvuPrompt,
+        tplMvuFallbackPrompt: settings.tplMvuFallbackPrompt ?? existing.tplMvuFallbackPrompt,
+        tplImagePrompt: settings.tplImagePrompt ?? existing.tplImagePrompt,
+        tplComfyMappingPrompt: settings.tplComfyMappingPrompt ?? existing.tplComfyMappingPrompt,
       };
       await uiSettingsStore.setItem('settings', merged);
     } catch (e) {

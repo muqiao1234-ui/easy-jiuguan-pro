@@ -1,6 +1,6 @@
 /** Service Worker - Cache First 策略 */
 
-const CACHE_NAME = 'tavern-sandbox-v1';
+const CACHE_NAME = 'tavern-sandbox-v1.39';
 
 // 需要预缓存的资源路径（构建后由 vite-plugin-singlefile 打包为单文件）
 const PRECACHE_URLS: string[] = ['/'];

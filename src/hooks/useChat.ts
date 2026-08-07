@@ -8,15 +8,19 @@ import type {
   SendOptions,
   DistillationResult,
   MessageRole,
+  MvuOperation,
   ScribeMode,
   ScribeEngine,
+  ModuleRpgConfig,
   WorldBook,
+  StickerPack,
 } from '../types';
-import { SSEParser } from '../utils/sse';
-import { assembleContext, calcWorldBookCooldown } from '../utils/context';
+import type { DebugSseResponse } from '../types';
+import { SSEParser, type TokenUsage } from '../utils/sse';
+import { assembleContext } from '../utils/context';
 import { generateId } from '../utils/id';
 import { filterStreamingReasoningText, stripReasoningBlocks } from '../utils/responseText';
-import { SCRIBE_SYSTEM_PROMPT, DEFAULT_TPL_GALGAME_CHAR_INJECTION, DEFAULT_TPL_EAVESDROP_APPEND, DEFAULT_TPL_IMPLANT_MEMORY_PREFIX, DEFAULT_TPL_IMPLANT_SCRIBE_PREFIX, DEFAULT_TPL_DISTILLED_NODE_PREFIX, buildSamplingParams } from '../utils/constants';
+import { SCRIBE_SYSTEM_PROMPT, DEFAULT_TPL_GALGAME_CHAR_INJECTION, DEFAULT_TPL_EAVESDROP_APPEND, DEFAULT_TPL_IMPLANT_MEMORY_PREFIX, DEFAULT_TPL_IMPLANT_SCRIBE_PREFIX, DEFAULT_TPL_DISTILLED_NODE_PREFIX, DEFAULT_TPL_MVU_PROMPT, DEFAULT_TPL_MVU_FALLBACK_PROMPT, buildSamplingParams } from '../utils/constants';
 import {
   GALGAME_TRIGGER_INTERVAL,
   GALGAME_MAX_TOKENS,
@@ -26,6 +30,14 @@ import {
   parseGalgameResponse,
 } from '../utils/galgameEngine';
 import {
+  applyModuleRpgCharacterSlots,
+  buildModuleRpgPrompt,
+  createModuleRpgSnapshot,
+  findLatestModuleRpgData,
+  mergeModuleRpgSnapshot,
+  parseModuleRpgResponse,
+} from '../utils/moduleRpg';
+import {
   CACHE_WORLD_BOOK_LIMIT,
   buildCacheWorldBookPrompt,
   extractCacheWorldBookPatch,
@@ -34,10 +46,141 @@ import {
 } from '../utils/cacheWorldBook';
 import { planDistillation } from '../utils/distillation';
 import * as Stores from '../db/stores';
+import { buildStickerPrompt, parseStickerResponse } from '../utils/stickers';
+import {
+  buildMvuPrompt,
+  buildMvuFallbackPrompt,
+  createMvuNodeData,
+  filterMvuStreamingText,
+  getMvuEntryKind,
+  getMvuScopeId,
+  isMvuControlEntry,
+  parseMvuInitBooks,
+  parseMvuResponse,
+  replayMvuState,
+} from '../utils/mvu';
 
 /** SSE 流式读取空闲超时：若服务端在 30s 内未发送任何新 chunk，视为已僵死并自动断开 */
 import { apiFetch } from '../utils/apiFetch';
 const STREAM_IDLE_TIMEOUT_MS = 30_000;
+
+function shouldRequestStreamUsage(model: ModelConfig): boolean {
+  return /deepseek/i.test(`${model.name} ${model.defaultModel} ${model.baseUrl}`);
+}
+
+function normalizeTokenUsage(usage: any): TokenUsage | null {
+  if (!usage || typeof usage.completion_tokens !== 'number') return null;
+  return {
+    completion_tokens: usage.completion_tokens,
+    prompt_tokens: usage.prompt_tokens ?? 0,
+    total_tokens: usage.total_tokens ?? 0,
+    reasoning_tokens: usage.completion_tokens_details?.reasoning_tokens
+      ?? usage.output_tokens_details?.reasoning_tokens
+      ?? usage.reasoning_tokens,
+  };
+}
+
+function createJsonDebugSnapshot(data: any, fullContent: string, usage: TokenUsage | null): DebugSseResponse {
+  const message = data?.choices?.[0]?.message || {};
+  return {
+    format: 'easyjiuguanpro.sse-response-debug.v1',
+    transport: 'json',
+    capturedAt: Date.now(),
+    events: [{
+      sequence: 1,
+      kind: 'json',
+      rawData: JSON.stringify(data),
+      data,
+    }],
+    tokenUsage: usage || undefined,
+    finishReason: data?.choices?.[0]?.finish_reason,
+    reasoningContent: typeof message.reasoning_content === 'string' ? message.reasoning_content : undefined,
+    rawContent: fullContent,
+  };
+}
+
+interface MvuFallbackResult {
+  operations: MvuOperation[];
+  diagnostics: string[];
+  rawResponse?: unknown;
+  content: string;
+  reasoningContent?: string;
+}
+
+async function requestDeepSeekMvuFallback(model: ModelConfig, prompt: string): Promise<MvuFallbackResult> {
+  try {
+    const response = await apiFetch(model.baseUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${model.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: model.defaultModel,
+        messages: [
+          { role: 'system', content: prompt },
+          { role: 'user', content: 'Return the JSON operations now.' },
+        ],
+        stream: false,
+        ...buildSamplingParams(0, 1),
+      }),
+    });
+    if (!response.ok) {
+      return {
+        operations: [],
+        diagnostics: [`DeepSeek MVU maintenance fallback failed: HTTP ${response.status}`],
+        content: '',
+      };
+    }
+
+    const rawResponse = await response.json();
+    const message = rawResponse?.choices?.[0]?.message || {};
+    const content = String(message.content || rawResponse?.choices?.[0]?.text || '').trim();
+    const reasoningContent = typeof message.reasoning_content === 'string' ? message.reasoning_content : undefined;
+    const direct = parseMvuResponse(content);
+    const parsed = direct.operations.length > 0
+      ? direct
+      : parseMvuResponse(`<JSONPatch>${content}</JSONPatch>`);
+    return {
+      operations: parsed.operations,
+      diagnostics: [
+        `DeepSeek MVU maintenance fallback executed: ${parsed.operations.length} operation(s).`,
+        ...parsed.diagnostics,
+      ],
+      rawResponse,
+      content,
+      reasoningContent,
+    };
+  } catch (error) {
+    return {
+      operations: [],
+      diagnostics: [`DeepSeek MVU maintenance fallback failed: ${error instanceof Error ? error.message : String(error)}`],
+      content: '',
+    };
+  }
+}
+
+function buildWorldBookScanWindow(nodes: MessageNode[], historyUserDepth: number): MessageNode[] {
+  const sorted = [...nodes].sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id));
+  let latestUserIndex = -1;
+  for (let index = sorted.length - 1; index >= 0; index -= 1) {
+    if (sorted[index].role === 'user') {
+      latestUserIndex = index;
+      break;
+    }
+  }
+  if (latestUserIndex === -1) return sorted;
+
+  let startIndex = latestUserIndex;
+  let remainingHistoryUsers = Math.max(0, historyUserDepth);
+  for (let index = latestUserIndex - 1; index >= 0 && remainingHistoryUsers > 0; index -= 1) {
+    if (sorted[index].role === 'user') {
+      startIndex = index;
+      remainingHistoryUsers -= 1;
+    }
+  }
+  return sorted.slice(startIndex);
+}
 
 export interface UseChatDeps {
   conversationId: string | null;
@@ -49,15 +192,25 @@ export interface UseChatDeps {
   scribeModelId: string | null;
   scribeEnabled: boolean;
   scribeCacheWorldBookEnabled: boolean;
+  mvuEnabled: boolean;
   scribeTriggerInterval: number;
   scribeRounds: number;
   scribeMode: ScribeMode;
   scribeEngine: ScribeEngine;
   galgamePrompt: string;
+  moduleRpgConfig: ModuleRpgConfig;
+  moduleRpgPrompt: string;
   thinkingEnabled: boolean;
+  streamingEnabled: boolean;
+  debugMode: boolean;
+  stickerEnabled: boolean;
+  stickerMaxCount: number;
+  stickerPackA?: StickerPack | null;
+  stickerPackB?: StickerPack | null;
   scribeSystemPrompt: string;
   recentRounds: number;
-  maxDistilledNodes: number;
+  worldBookScanDepth: number;
+  maxInjectedMemories: number;
   maxWorldBookEntries: number;
   autoTriggerDistillation: boolean;
   triggerThreshold: number;
@@ -78,6 +231,7 @@ export interface UseChatDeps {
     query?: Omit<Stores.MessageNodeQuery, 'order' | 'limit'>
   ) => Promise<number>;
   getMessageNodeById: (id: string) => Promise<MessageNode | undefined>;
+  getNodesByConversation: (convId: string) => Promise<MessageNode[]>;
   getMessageNodeMetadataByConversation: (convId: string) => Promise<Stores.MessageNodeMetadata[]>;
   commitDistillationBatch: (sourceIds: string[], distilledNode: MessageNode) => Promise<boolean>;
   scanWorldBook: (
@@ -96,12 +250,17 @@ export interface UseChatDeps {
   tplWorldBookPrefix?: string;
   tplDistilledPrefix?: string;
   tplStateBookPrefix?: string;
+  userName?: string;
+  userDescription?: string;
   tplEavesdropAppend?: string;
   tplGalgameCharInjection?: string;
   tplImplantMemoryPrefix?: string;
   tplImplantScribePrefix?: string;
   tplDistilledNodePrefix?: string;
   tplCacheWorldBookPrompt?: string;
+  tplStickerPrompt?: string;
+  tplMvuPrompt?: string;
+  tplMvuFallbackPrompt?: string;
 }
 
 export function useChat(deps: UseChatDeps) {
@@ -111,15 +270,9 @@ export function useChat(deps: UseChatDeps) {
   const [scribeStreaming, setScribeStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [implantMemoryArmed, setImplantMemoryArmed] = useState(false);
-  /** 调试用：最近一次发送给角色的完整 messages 数组 */
-  const [lastPrompt, setLastPrompt] = useState<{ role: string; content: string }[] | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const streamingFrameRef = useRef<number | null>(null);
   const pendingStreamingContentRef = useRef('');
-  /** 世界书每词条冷却状态：entryId → 上次注入的轮数 */
-  const worldBookCooldownRef = useRef<Map<string, number>>(new Map());
-  /** 当前对话轮数计数器 */
-  const roundCounterRef = useRef<number>(0);
 
   const loadDistillationBatch = useCallback(async () => {
     if (!deps.conversationId) return null;
@@ -159,11 +312,15 @@ export function useChat(deps: UseChatDeps) {
         deps.scanWorldBook(character.worldBookId, recentMessages, maxEntries),
         deps.scanWorldBook(character.cacheWorldBookId, recentMessages, maxEntries),
       ]);
-      const seen = new Set<string>();
+      const seenIds = new Set<string>();
+      const seenValues = new Set<string>();
       return [...manualEntries, ...cacheEntries]
+        .filter((entry) => !isMvuControlEntry(entry))
         .filter((entry) => {
-          if (seen.has(entry.id)) return false;
-          seen.add(entry.id);
+          const valueSignature = entry.value.trim().replace(/\s+/g, ' ').toLowerCase();
+          if (seenIds.has(entry.id) || seenValues.has(valueSignature)) return false;
+          seenIds.add(entry.id);
+          seenValues.add(valueSignature);
           return true;
         })
         .sort((a, b) => b.priority - a.priority)
@@ -171,6 +328,17 @@ export function useChat(deps: UseChatDeps) {
     },
     [deps]
   );
+
+  const loadMvuContext = useCallback(async (character: Character, allNodes: MessageNode[], scopeId: string) => {
+    const book = character.worldBookId
+      ? await Stores.getWorldBookById(character.worldBookId)
+      : null;
+    const books = book ? [book] : [];
+    const initialized = parseMvuInitBooks(books);
+    const runtime = replayMvuState(allNodes, scopeId, initialized.snapshot, character.id);
+    const updateEntries = book?.entries.filter((entry) => getMvuEntryKind(entry) === 'update') || [];
+    return { runtime, updateEntries, initDiagnostics: initialized.diagnostics, scopeId };
+  }, []);
 
   const loadCacheWorldBookContext = useCallback(
     async (character?: Character | null): Promise<{ cacheBook: WorldBook; manualBook: WorldBook | null } | null> => {
@@ -486,6 +654,94 @@ export function useChat(deps: UseChatDeps) {
     [deps]
   );
 
+  /** 模块化 Gal/RPG 引擎：独立书记 AI 只维护受限状态 JSON，不参与角色正文。 */
+  const triggerModuleRpgEngine = useCallback(
+    async (recentNodes: MessageNode[], targetAssistantNodeId: string, character?: Character) => {
+      if (!deps.conversationId || !deps.scribeModelId || !deps.scribeEnabled) return;
+      setScribeStreaming(true);
+      try {
+        const model = await deps.getModelById(deps.scribeModelId);
+        if (!model) throw new Error('模块化 Gal/RPG 模型未找到');
+
+        const allNodes = await deps.queryNodesByConversation(deps.conversationId, {
+          roles: ['user', 'charA', 'charB'], isArchived: false, limit: 120,
+        });
+        const previousBase = findLatestModuleRpgData(allNodes)?.snapshot
+          || createModuleRpgSnapshot(deps.characterA, deps.characterB, deps.moduleRpgConfig);
+        const previous = applyModuleRpgCharacterSlots(
+          previousBase,
+          deps.characterA,
+          deps.characterB,
+          deps.moduleRpgConfig
+        );
+        const dialogue = [...recentNodes]
+          .sort((a, b) => a.timestamp - b.timestamp)
+          .filter((node) => node.role === 'user' || node.role === 'charA' || node.role === 'charB')
+          .map((node) => `${node.senderName}: ${cleanDialogueText(node.content)}`)
+          .join('\n');
+        if (!dialogue.trim()) return;
+
+        const cacheContext = await loadCacheWorldBookContext(character);
+        const cachePrompt = cacheContext
+          ? buildCacheWorldBookPrompt(cacheContext.cacheBook, cacheContext.manualBook, deps.tplCacheWorldBookPrompt)
+          : '';
+        const roleReference = [deps.characterA, deps.characterB]
+          .filter((item): item is Character => Boolean(item))
+          .map((item) => `【${item.name} 角色卡】\n${item.systemPrompt.slice(0, 3000)}`)
+          .join('\n\n');
+        const messages: Array<{ role: 'system' | 'user'; content: string }> = [
+          { role: 'system', content: buildModuleRpgPrompt(deps.moduleRpgPrompt, deps.moduleRpgConfig, previous) },
+          ...(cachePrompt ? [{ role: 'system' as const, content: cachePrompt }] : []),
+          ...(roleReference ? [{ role: 'system' as const, content: roleReference }] : []),
+          { role: 'user', content: `【刚完成的对话】\n${dialogue}\n\n现在只输出本轮状态变更 JSON。` },
+        ];
+        const response = await apiFetch(model.baseUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${model.apiKey}` },
+          body: JSON.stringify({
+            model: model.defaultModel,
+            messages,
+            stream: false,
+            max_tokens: 1800,
+            temperature: 0.2,
+            top_p: 0.85,
+          }),
+        });
+        if (!response.ok) throw new Error(`模块化 Gal/RPG API 错误: ${response.status}`);
+
+        const data = await response.json();
+        const message = data.choices?.[0]?.message || {};
+        const raw = stripReasoningBlocks(message.content || data.choices?.[0]?.text || '');
+        const reasoning = typeof message.reasoning_content === 'string' ? message.reasoning_content : '';
+        let { displayText, patch } = extractCacheWorldBookPatch(raw);
+        if (!patch && reasoning) patch = extractCacheWorldBookPatch(reasoning).patch;
+        if (cacheContext && patch?.operations?.length) {
+          await applyCacheWorldBookPatch(cacheContext.cacheBook.id, patch.operations, cacheContext.manualBook);
+        }
+        const parsed = parseModuleRpgResponse(displayText || raw)
+          || (!raw && reasoning ? parseModuleRpgResponse(reasoning) : null);
+        const merged = parsed
+          ? mergeModuleRpgSnapshot(parsed, previous, deps.moduleRpgConfig)
+          : { snapshot: previous, diagnostics: ['书记输出未通过 JSON 校验，已保留上一份合法状态。'] };
+        await deps.updateMessageNode(targetAssistantNodeId, {
+          moduleRpgData: {
+            snapshot: merged.snapshot,
+            source: 'module',
+            diagnostics: merged.diagnostics,
+            rawResponse: raw || reasoning || undefined,
+          },
+          ...(data.usage?.total_tokens !== undefined ? { scribeTokenCost: data.usage.total_tokens } : {}),
+        });
+        deps.onNodesRefresh(await deps.queryNodesByConversation(deps.conversationId, { limit: 100 }));
+      } catch (error) {
+        console.error('模块化 Gal/RPG 引擎失败:', error);
+      } finally {
+        setScribeStreaming(false);
+      }
+    },
+    [deps, loadCacheWorldBookContext, applyCacheWorldBookPatch]
+  );
+
   const sendMessage = useCallback(
     async (target: SendTarget, userContent: string, options?: SendOptions) => {
       const modelId = target.type === 'charA' ? deps.charAModelId : deps.charBModelId;
@@ -511,6 +767,13 @@ export function useChat(deps: UseChatDeps) {
       const abort = new AbortController();
       abortRef.current = abort;
       let fullContent = '';
+      let parser: SSEParser | null = null;
+      let responseUsage: TokenUsage | null = null;
+      let jsonDebugResponse: DebugSseResponse | null = null;
+      const targetRole: MessageRole = target.type === 'charB_eavesdrop' ? 'charB' : target.type;
+      const stickerPack = deps.stickerEnabled
+        ? (targetRole === 'charA' ? deps.stickerPackA : deps.stickerPackB)
+        : null;
       // 记录 assembleContext 的 tokenEstimate，供 catch 块（AbortError 中断）使用
       let preTryInputTokens: number | undefined;
 
@@ -575,6 +838,7 @@ export function useChat(deps: UseChatDeps) {
             role: 'user',
             senderName: '你',
             content: userContent,
+            replyTarget: target.type === 'charA' ? 'charA' : target.type === 'charB' ? 'charB' : undefined,
             isArchived: false,
             timestamp: Date.now(),
             implantedMemory: skipAutoDistilled,
@@ -582,7 +846,10 @@ export function useChat(deps: UseChatDeps) {
           await deps.addMessageNode(userNode);
         }
 
-        const [unarchived, distilledCandidates] = await Promise.all([
+        const contextSnapshot = options?.contextSnapshot;
+        const [unarchived, distilledCandidates, scanTimeline] = contextSnapshot
+          ? [contextSnapshot.unarchived, contextSnapshot.distilledCandidates, contextSnapshot.scanTimeline]
+          : await Promise.all([
           deps.queryNodesByConversation(deps.conversationId, {
             roles: ['user', 'charA', 'charB', 'system'],
             isArchived: false,
@@ -590,7 +857,12 @@ export function useChat(deps: UseChatDeps) {
           }),
           deps.queryNodesByConversation(deps.conversationId, {
             roles: ['distilled'],
-            limit: Math.max(1, deps.maxDistilledNodes),
+            limit: Math.max(1, deps.maxInjectedMemories),
+          }),
+          deps.queryNodesByConversation(deps.conversationId, {
+            roles: ['user', 'charA', 'charB', 'system', 'distilled'],
+            isArchived: false,
+            limit: 2000,
           }),
         ]);
         const latestCumulative = [...distilledCandidates].reverse().find((node) => node.distillationMeta?.cumulative);
@@ -598,23 +870,26 @@ export function useChat(deps: UseChatDeps) {
         // 重试场景下 userNode 已经在 unarchived 中（复用既有节点），无需再追加；
         // 普通场景下 userNode 刚刚 addMessageNode，已写入 DB，也已在 allNodes → unarchived 中。
         // 不再额外追加 userNode，否则会导致当前用户消息重复注入上下文，token 虚高、世界书误触发。
-        const recentForScan = unarchived.slice(-deps.recentRounds);
-        const recentForContext = recentForScan;
+        const recentForContext = unarchived.slice(-deps.recentRounds);
+        const worldBookScanWindow = buildWorldBookScanWindow(scanTimeline, deps.worldBookScanDepth);
 
         const wbEntries = await scanBoundWorldBooks(
           character,
-          recentForScan,
+          worldBookScanWindow,
           deps.maxWorldBookEntries
         );
 
         const model = await deps.getModelById(modelId);
         if (!model) throw new Error(`角色${target.type === 'charA' ? 'A' : 'B'}模型未找到`);
 
-        // 递增轮数计数器
-        roundCounterRef.current += 1;
-        const currentRound = roundCounterRef.current;
-
-        const targetRole: MessageRole = target.type === 'charB_eavesdrop' ? 'charB' : target.type;
+        const mvuScopeId = getMvuScopeId(character.id, targetRole);
+        const mvuContext = deps.mvuEnabled
+          ? await loadMvuContext(character, contextSnapshot?.allNodes ?? await deps.getNodesByConversation(deps.conversationId), mvuScopeId)
+          : null;
+        const stickerPrompt = buildStickerPrompt(stickerPack, deps.stickerMaxCount, deps.tplStickerPrompt);
+        const mvuPrompt = mvuContext
+          ? buildMvuPrompt(deps.tplMvuPrompt || DEFAULT_TPL_MVU_PROMPT, mvuContext.runtime, mvuContext.updateEntries)
+          : '';
 
         const assembled = assembleContext({
           character,
@@ -627,9 +902,6 @@ export function useChat(deps: UseChatDeps) {
           recentMessages: recentForContext,
           distilledNodes: distilled,
           maxTokens: model.maxContextTokens,
-          worldBookCooldown: calcWorldBookCooldown(deps.recentRounds),
-          worldBookCooldownState: worldBookCooldownRef.current,
-          currentRound,
           skipAutoDistilled,
           tplUserWrapper: deps.tplUserWrapper,
           tplOtherCharWrapper: deps.tplOtherCharWrapper,
@@ -637,6 +909,10 @@ export function useChat(deps: UseChatDeps) {
           tplWorldBookPrefix: deps.tplWorldBookPrefix,
           tplDistilledPrefix: deps.tplDistilledPrefix,
           tplStateBookPrefix: deps.tplStateBookPrefix,
+          userName: deps.userName,
+          userDescription: deps.userDescription,
+          moduleRpgConfig: deps.moduleRpgConfig,
+          appendedSystemPrompt: [stickerPrompt, mvuPrompt].filter(Boolean).join('\n\n'),
         });
 
         // 把上下文元数据回写到用户消息节点
@@ -647,9 +923,6 @@ export function useChat(deps: UseChatDeps) {
         // 存储供 catch 块使用（assembled 是 try 块作用域的 const，catch 无法直接访问）
         preTryInputTokens = assembled.metadata.tokenEstimate;
 
-        // 调试用：保存本次发送的完整 messages
-        setLastPrompt(assembled.messages.map((m) => ({ role: m.role, content: m.content })));
-
         const resp = await apiFetch(model.baseUrl, {
           method: 'POST',
           headers: {
@@ -659,7 +932,8 @@ export function useChat(deps: UseChatDeps) {
           body: JSON.stringify({
             model: model.defaultModel,
             messages: assembled.messages,
-            stream: true,
+            stream: deps.streamingEnabled,
+            ...(deps.streamingEnabled && shouldRequestStreamUsage(model) ? { stream_options: { include_usage: true } } : {}),
             ...buildSamplingParams(model.temperature, model.topP),
             ...(deps.thinkingEnabled ? { reasoning_effort: 'medium' } : {}),
           }),
@@ -671,8 +945,15 @@ export function useChat(deps: UseChatDeps) {
           throw new Error(`API 错误 ${resp.status}: ${errText.slice(0, 200)}`);
         }
 
-        const reader = resp.body!.getReader();
-        const parser = new SSEParser();
+        if (!deps.streamingEnabled) {
+          const data = await resp.json();
+          const message = data.choices?.[0]?.message || {};
+          fullContent = String(message.content || data.choices?.[0]?.text || '');
+          responseUsage = normalizeTokenUsage(data.usage);
+          jsonDebugResponse = deps.debugMode ? createJsonDebugSnapshot(data, fullContent, responseUsage) : null;
+        } else {
+          const reader = resp.body!.getReader();
+        parser = new SSEParser();
         fullContent = '';
 
         while (true) {
@@ -682,25 +963,36 @@ export function useChat(deps: UseChatDeps) {
             setTimeout(() => abort.abort(), STREAM_IDLE_TIMEOUT_MS);
           const { done, value } = await reader.read();
           if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
-          if (done) break;
+          if (done) {
+            for (const chunk of parser.finish()) {
+              if (chunk.done) continue;
+              fullContent += chunk.content;
+              publishStreamingContent(filterMvuStreamingText(filterStreamingReasoningText(fullContent)));
+            }
+            break;
+          }
           const chunks = parser.parse(value);
           for (const chunk of chunks) {
             if (chunk.done) break;
             fullContent += chunk.content;
-            publishStreamingContent(filterStreamingReasoningText(fullContent));
+            publishStreamingContent(filterMvuStreamingText(filterStreamingReasoningText(fullContent)));
           }
         }
 
+        }
         // 计算本消息的 Token 消耗: 优先从 API usage 获取精确值，否则暴力估计
         let tokenCost: number;
         let tokenCostIsExact: boolean;
         let tokenCostInput: number | undefined;
         let tokenCostTotal: number | undefined;
-        if (parser.tokenUsage && parser.tokenUsage.completion_tokens > 0) {
-          tokenCost = parser.tokenUsage.completion_tokens;
+        let tokenCostReasoning: number | undefined;
+        const tokenUsage = parser?.tokenUsage ?? responseUsage;
+        if (tokenUsage && tokenUsage.completion_tokens > 0) {
+          tokenCost = tokenUsage.completion_tokens;
           tokenCostIsExact = true;
-          tokenCostInput = parser.tokenUsage.prompt_tokens || undefined;
-          tokenCostTotal = parser.tokenUsage.total_tokens || (tokenCostInput ? tokenCostInput + tokenCost : undefined);
+          tokenCostInput = tokenUsage.prompt_tokens || undefined;
+          tokenCostTotal = tokenUsage.total_tokens || (tokenCostInput ? tokenCostInput + tokenCost : undefined);
+          tokenCostReasoning = tokenUsage.reasoning_tokens;
         } else {
           tokenCost = Math.ceil(fullContent.length * 0.5);
           tokenCostIsExact = false;
@@ -709,18 +1001,65 @@ export function useChat(deps: UseChatDeps) {
           tokenCostTotal = tokenCostInput ? tokenCostInput + tokenCost : undefined;
         }
 
+        let mvuResponse = deps.mvuEnabled
+          ? parseMvuResponse(stripReasoningBlocks(fullContent))
+          : { content: stripReasoningBlocks(fullContent), operations: [], diagnostics: [] };
+        let mvuFallback: MvuFallbackResult | null = null;
+        if (mvuContext && shouldRequestStreamUsage(model) && mvuResponse.operations.length === 0) {
+          const dialogue = `${deps.userName || 'Player'}: ${userNode.content}\n${character.name}: ${mvuResponse.content}`;
+          const fallbackPrompt = buildMvuFallbackPrompt(
+            deps.tplMvuFallbackPrompt || DEFAULT_TPL_MVU_FALLBACK_PROMPT,
+            mvuContext.runtime,
+            mvuContext.updateEntries,
+            dialogue
+          );
+          mvuFallback = await requestDeepSeekMvuFallback(model, fallbackPrompt);
+          mvuResponse = {
+            ...mvuResponse,
+            operations: mvuFallback.operations.length > 0 ? mvuFallback.operations : mvuResponse.operations,
+            diagnostics: [...mvuResponse.diagnostics, ...mvuFallback.diagnostics],
+          };
+        }
+        const parsedStickerResponse = parseStickerResponse(
+          mvuResponse.content,
+          stickerPack,
+          deps.stickerMaxCount
+        );
+        const debugResponse = deps.debugMode ? (parser?.getDebugSnapshot(fullContent) ?? jsonDebugResponse ?? undefined) : undefined;
+        if (debugResponse && mvuFallback) {
+          debugResponse.auxiliaryResponses = [{
+            kind: 'mvu_fallback',
+            rawResponse: mvuFallback.rawResponse ?? null,
+            content: mvuFallback.content,
+            reasoningContent: mvuFallback.reasoningContent,
+            operationCount: mvuFallback.operations.length,
+            diagnostics: mvuFallback.diagnostics,
+          }];
+        }
         const aiNode: MessageNode = {
           id: generateId(),
           conversationId: deps.conversationId,
           role: target.type === 'charB_eavesdrop' ? 'charB' : target.type,
           senderName: character.name,
-          content: stripReasoningBlocks(fullContent) || '(空响应)',
+          content: parsedStickerResponse.content.trim() ? parsedStickerResponse.content : '(空响应)',
+          stickerUsages: parsedStickerResponse.usages.length > 0 ? parsedStickerResponse.usages : undefined,
           isArchived: false,
           timestamp: Date.now(),
           tokenCost,
           tokenCostIsExact,
           tokenCostInput,
           tokenCostTotal,
+          tokenCostReasoning,
+          debugPrompt: deps.debugMode ? assembled.messages : undefined,
+          debugResponse,
+          ...(mvuContext ? {
+            mvuData: createMvuNodeData(
+              mvuContext.scopeId,
+              mvuContext.runtime,
+              mvuResponse.operations,
+              [...mvuContext.initDiagnostics, ...mvuResponse.diagnostics]
+            ),
+          } : {}),
         };
         await deps.addMessageNode(aiNode);
 
@@ -762,7 +1101,13 @@ export function useChat(deps: UseChatDeps) {
               else if (deps.scribeMode === 'auto') shouldRun = true;
 
               if (shouldRun) {
-                if (deps.scribeEngine === 'galgame') {
+                if (deps.scribeEngine === 'module') {
+                  await triggerModuleRpgEngine(
+                    nonSystemNodes.slice(-deps.recentRounds),
+                    aiNode.id,
+                    character
+                  );
+                } else if (deps.scribeEngine === 'galgame') {
                   console.log('[Galgame] 触发数值引擎, aiNode=%s, charName=%s', aiNode.id, character.name);
                   await triggerGalgameEngine(
                     nonSystemNodes.slice(-deps.recentRounds),
@@ -794,12 +1139,6 @@ export function useChat(deps: UseChatDeps) {
                   limit: 1,
                 });
 
-                // 扫描蒸馏区间激活的世界书条目
-                let distillWbEntries: WorldBookEntry[] = [];
-                if (deps.characterA) {
-                  distillWbEntries = await scanBoundWorldBooks(deps.characterA, batch.nodes, deps.maxWorldBookEntries);
-                }
-
                 await deps.performDistillation({
                   nodes: batch.nodes,
                   sourceNodeIds: batch.plan.sourceIds,
@@ -809,7 +1148,6 @@ export function useChat(deps: UseChatDeps) {
                   distillationPrompt: deps.distillationPrompt,
                   tplDistilledNodePrefix: deps.tplDistilledNodePrefix,
                   prevDistilledContent: prevDistilled?.content || null,
-                  activatedWorldBookEntries: distillWbEntries,
                   getModelById: deps.getModelById,
                   commitDistillationBatch: deps.commitDistillationBatch,
                 });
@@ -819,20 +1157,34 @@ export function useChat(deps: UseChatDeps) {
         })().catch(console.error);
       } catch (e: any) {
         if (e.name === 'AbortError') {
-          const visibleContent = stripReasoningBlocks(fullContent);
-          if (visibleContent.trim()) {
+          if (parser) {
+            for (const chunk of parser.finish()) {
+              if (!chunk.done) fullContent += chunk.content;
+            }
+          }
+          const debugResponse = deps.debugMode && parser
+            ? parser.getDebugSnapshot(fullContent)
+            : undefined;
+          const parsedStickerResponse = parseStickerResponse(
+            stripReasoningBlocks(fullContent),
+            stickerPack,
+            deps.stickerMaxCount
+          );
+          if (parsedStickerResponse.content.trim() || parsedStickerResponse.usages.length > 0 || debugResponse?.events.length) {
             const partialNode: MessageNode = {
               id: generateId(),
               conversationId: deps.conversationId,
               role: target.type === 'charB_eavesdrop' ? 'charB' : target.type,
               senderName: character.name,
-              content: visibleContent,
+              content: parsedStickerResponse.content || '(空响应)',
+              stickerUsages: parsedStickerResponse.usages.length > 0 ? parsedStickerResponse.usages : undefined,
               isArchived: false,
               timestamp: Date.now(),
               tokenCost: Math.ceil(fullContent.length * 0.5),
               tokenCostIsExact: false,
               tokenCostInput: preTryInputTokens,
               tokenCostTotal: (preTryInputTokens ?? 0) + Math.ceil(fullContent.length * 0.5),
+              debugResponse,
             };
             await deps.addMessageNode(partialNode);
             const updatedNodes = await deps.queryNodesByConversation(deps.conversationId, { limit: 100 });
@@ -851,6 +1203,67 @@ export function useChat(deps: UseChatDeps) {
     [deps]
   );
 
+  const sendMessageToBoth = useCallback(
+    async (userContent: string) => {
+      if (!deps.conversationId || !deps.characterA || !deps.characterB || !deps.charAModelId || !deps.charBModelId) {
+        setError('请先完成角色 A、角色 B 及各自模型的绑定');
+        return;
+      }
+
+      const userNode: MessageNode = {
+        id: generateId(),
+        conversationId: deps.conversationId,
+        role: 'user',
+        senderName: '你',
+        content: userContent,
+        isArchived: false,
+        timestamp: Date.now(),
+      };
+      await deps.addMessageNode(userNode);
+
+      // A 与 B 均从写入玩家消息后的同一份时间线组装上下文，B 不会看到 A 的新回复。
+      const [unarchived, distilledCandidates, scanTimeline] = await Promise.all([
+        deps.queryNodesByConversation(deps.conversationId, {
+          roles: ['user', 'charA', 'charB', 'system'],
+          isArchived: false,
+          limit: deps.recentRounds,
+        }),
+        deps.queryNodesByConversation(deps.conversationId, {
+          roles: ['distilled'],
+          limit: Math.max(1, deps.maxInjectedMemories),
+        }),
+        deps.queryNodesByConversation(deps.conversationId, {
+          roles: ['user', 'charA', 'charB', 'system', 'distilled'],
+          isArchived: false,
+          limit: 2000,
+        }),
+      ]);
+      const contextSnapshot = {
+        unarchived,
+        distilledCandidates,
+        scanTimeline,
+        allNodes: scanTimeline,
+      };
+      const options: SendOptions = {
+        skipUserNode: true,
+        existingUserNodeId: userNode.id,
+        contextSnapshot,
+      };
+
+      await sendMessage(
+        { type: 'charA', characterId: deps.characterA.id },
+        userContent,
+        options
+      );
+      await sendMessage(
+        { type: 'charB', characterId: deps.characterB.id },
+        userContent,
+        options
+      );
+    },
+    [deps, sendMessage]
+  );
+
   const triggerEavesdrop = useCallback(async () => {
     if (!deps.conversationId || !deps.charBModelId || !deps.characterB) {
       setError('请先选择对话、角色B模型和角色B');
@@ -862,9 +1275,13 @@ export function useChat(deps: UseChatDeps) {
     setStreamingTarget({ type: 'charB', characterId: deps.characterB.id });
     setError(null);
     let fullContent = '';
+    let parser: SSEParser | null = null;
+    let responseUsage: TokenUsage | null = null;
+    let jsonDebugResponse: DebugSseResponse | null = null;
+    const stickerPack = deps.stickerEnabled ? deps.stickerPackB : null;
 
     try {
-      const [unarchived, distilledCandidates] = await Promise.all([
+      const [unarchived, distilledCandidates, scanTimeline] = await Promise.all([
         deps.queryNodesByConversation(deps.conversationId, {
           roles: ['user', 'charA', 'charB', 'system'],
           isArchived: false,
@@ -872,7 +1289,12 @@ export function useChat(deps: UseChatDeps) {
         }),
         deps.queryNodesByConversation(deps.conversationId, {
           roles: ['distilled'],
-          limit: Math.max(1, deps.maxDistilledNodes),
+          limit: Math.max(1, deps.maxInjectedMemories),
+        }),
+        deps.queryNodesByConversation(deps.conversationId, {
+          roles: ['user', 'charA', 'charB', 'system', 'distilled'],
+          isArchived: false,
+          limit: 2000,
         }),
       ]);
       const latestCumulative = [...distilledCandidates].reverse().find((item) => item.distillationMeta?.cumulative);
@@ -887,15 +1309,21 @@ export function useChat(deps: UseChatDeps) {
 
       const wbEntries = await scanBoundWorldBooks(
         deps.characterB,
-        unarchived,
+        buildWorldBookScanWindow(scanTimeline, deps.worldBookScanDepth),
         deps.maxWorldBookEntries
       );
 
       const model = await deps.getModelById(deps.charBModelId);
       if (!model) throw new Error('角色B模型未找到');
 
-      roundCounterRef.current += 1;
-      const currentRound = roundCounterRef.current;
+      const mvuScopeId = getMvuScopeId(deps.characterB.id, 'charB');
+      const mvuContext = deps.mvuEnabled
+        ? await loadMvuContext(deps.characterB, await deps.getNodesByConversation(deps.conversationId), mvuScopeId)
+        : null;
+      const stickerPrompt = buildStickerPrompt(stickerPack, deps.stickerMaxCount, deps.tplStickerPrompt);
+      const mvuPrompt = mvuContext
+        ? buildMvuPrompt(deps.tplMvuPrompt || DEFAULT_TPL_MVU_PROMPT, mvuContext.runtime, mvuContext.updateEntries)
+        : '';
 
       const assembled = assembleContext({
         character: charBWithEavesdrop,
@@ -905,19 +1333,17 @@ export function useChat(deps: UseChatDeps) {
         recentMessages: unarchived,
         distilledNodes: distilled,
         maxTokens: model.maxContextTokens,
-        worldBookCooldown: calcWorldBookCooldown(deps.recentRounds),
-        worldBookCooldownState: worldBookCooldownRef.current,
-        currentRound,
         tplUserWrapper: deps.tplUserWrapper,
         tplOtherCharWrapper: deps.tplOtherCharWrapper,
         tplIdentityAnchor: deps.tplIdentityAnchor,
         tplWorldBookPrefix: deps.tplWorldBookPrefix,
         tplDistilledPrefix: deps.tplDistilledPrefix,
         tplStateBookPrefix: deps.tplStateBookPrefix,
+        userName: deps.userName,
+        userDescription: deps.userDescription,
+        moduleRpgConfig: deps.moduleRpgConfig,
+        appendedSystemPrompt: [stickerPrompt, mvuPrompt].filter(Boolean).join('\n\n'),
       });
-
-      // 调试用：保存本次旁听发送的完整 messages
-      setLastPrompt(assembled.messages.map((m) => ({ role: m.role, content: m.content })));
 
       const abort = new AbortController();
       abortRef.current = abort;
@@ -931,16 +1357,24 @@ export function useChat(deps: UseChatDeps) {
         body: JSON.stringify({
           model: model.defaultModel,
           messages: assembled.messages,
-          stream: true,
+          stream: deps.streamingEnabled,
+          ...(deps.streamingEnabled && shouldRequestStreamUsage(model) ? { stream_options: { include_usage: true } } : {}),
           ...buildSamplingParams(model.temperature, model.topP),
         }),
         signal: abort.signal,
       });
 
       if (!resp.ok) throw new Error(`API 错误: ${resp.status}`);
+      if (!deps.streamingEnabled) {
+        const data = await resp.json();
+        const message = data.choices?.[0]?.message || {};
+        fullContent = String(message.content || data.choices?.[0]?.text || '');
+        responseUsage = normalizeTokenUsage(data.usage);
+        jsonDebugResponse = deps.debugMode ? createJsonDebugSnapshot(data, fullContent, responseUsage) : null;
+      } else {
 
       const reader = resp.body!.getReader();
-      const parser = new SSEParser();
+      parser = new SSEParser();
       fullContent = '';
 
       while (true) {
@@ -948,23 +1382,34 @@ export function useChat(deps: UseChatDeps) {
           setTimeout(() => abort.abort(), STREAM_IDLE_TIMEOUT_MS);
         const { done, value } = await reader.read();
         if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
-        if (done) break;
+        if (done) {
+          for (const chunk of parser.finish()) {
+            if (chunk.done) continue;
+            fullContent += chunk.content;
+            publishStreamingContent(filterMvuStreamingText(filterStreamingReasoningText(fullContent)));
+          }
+          break;
+        }
         for (const chunk of parser.parse(value)) {
           if (chunk.done) break;
           fullContent += chunk.content;
-          publishStreamingContent(filterStreamingReasoningText(fullContent));
+          publishStreamingContent(filterMvuStreamingText(filterStreamingReasoningText(fullContent)));
         }
+      }
       }
 
       let tokenCost: number;
       let tokenCostIsExact: boolean;
       let tokenCostInput: number | undefined;
       let tokenCostTotal: number | undefined;
-      if (parser.tokenUsage && parser.tokenUsage.completion_tokens > 0) {
-        tokenCost = parser.tokenUsage.completion_tokens;
+      let tokenCostReasoning: number | undefined;
+      const tokenUsage = parser?.tokenUsage ?? responseUsage;
+      if (tokenUsage && tokenUsage.completion_tokens > 0) {
+        tokenCost = tokenUsage.completion_tokens;
         tokenCostIsExact = true;
-        tokenCostInput = parser.tokenUsage.prompt_tokens || undefined;
-        tokenCostTotal = parser.tokenUsage.total_tokens || (tokenCostInput ? tokenCostInput + tokenCost : undefined);
+        tokenCostInput = tokenUsage.prompt_tokens || undefined;
+        tokenCostTotal = tokenUsage.total_tokens || (tokenCostInput ? tokenCostInput + tokenCost : undefined);
+        tokenCostReasoning = tokenUsage.reasoning_tokens;
       } else {
         tokenCost = Math.ceil(fullContent.length * 0.5);
         tokenCostIsExact = false;
@@ -972,18 +1417,70 @@ export function useChat(deps: UseChatDeps) {
         tokenCostTotal = tokenCostInput ? tokenCostInput + tokenCost : undefined;
       }
 
+      let mvuResponse = deps.mvuEnabled
+        ? parseMvuResponse(stripReasoningBlocks(fullContent))
+        : { content: stripReasoningBlocks(fullContent), operations: [], diagnostics: [] };
+      let mvuFallback: MvuFallbackResult | null = null;
+      if (mvuContext && shouldRequestStreamUsage(model) && mvuResponse.operations.length === 0) {
+        const dialogue = [...unarchived.slice(-4), {
+          senderName: deps.characterB.name,
+          content: mvuResponse.content,
+        }]
+          .map((item) => `${item.senderName}: ${item.content}`)
+          .join('\n');
+        const fallbackPrompt = buildMvuFallbackPrompt(
+          deps.tplMvuFallbackPrompt || DEFAULT_TPL_MVU_FALLBACK_PROMPT,
+          mvuContext.runtime,
+          mvuContext.updateEntries,
+          dialogue
+        );
+        mvuFallback = await requestDeepSeekMvuFallback(model, fallbackPrompt);
+        mvuResponse = {
+          ...mvuResponse,
+          operations: mvuFallback.operations.length > 0 ? mvuFallback.operations : mvuResponse.operations,
+          diagnostics: [...mvuResponse.diagnostics, ...mvuFallback.diagnostics],
+        };
+      }
+      const parsedStickerResponse = parseStickerResponse(
+        mvuResponse.content,
+        stickerPack,
+        deps.stickerMaxCount
+      );
+      const debugResponse = deps.debugMode ? (parser?.getDebugSnapshot(fullContent) ?? jsonDebugResponse ?? undefined) : undefined;
+      if (debugResponse && mvuFallback) {
+        debugResponse.auxiliaryResponses = [{
+          kind: 'mvu_fallback',
+          rawResponse: mvuFallback.rawResponse ?? null,
+          content: mvuFallback.content,
+          reasoningContent: mvuFallback.reasoningContent,
+          operationCount: mvuFallback.operations.length,
+          diagnostics: mvuFallback.diagnostics,
+        }];
+      }
       const node: MessageNode = {
         id: generateId(),
         conversationId: deps.conversationId,
         role: 'charB',
         senderName: deps.characterB.name,
-        content: stripReasoningBlocks(fullContent) || '(没说话)',
+        content: parsedStickerResponse.content.trim() ? parsedStickerResponse.content : '(没说话)',
+        stickerUsages: parsedStickerResponse.usages.length > 0 ? parsedStickerResponse.usages : undefined,
         isArchived: false,
         timestamp: Date.now(),
         tokenCost,
         tokenCostIsExact,
         tokenCostInput,
         tokenCostTotal,
+        tokenCostReasoning,
+        debugPrompt: deps.debugMode ? assembled.messages : undefined,
+        debugResponse,
+        ...(mvuContext ? {
+          mvuData: createMvuNodeData(
+            mvuContext.scopeId,
+            mvuContext.runtime,
+            mvuResponse.operations,
+            [...mvuContext.initDiagnostics, ...mvuResponse.diagnostics]
+          ),
+        } : {}),
       };
       await deps.addMessageNode(node);
 
@@ -1009,7 +1506,13 @@ export function useChat(deps: UseChatDeps) {
           : deps.scribeTriggerInterval;
         if (triggerInterval > 0 && assistantCount > 0 && assistantCount % triggerInterval === 0) {
           if (deps.scribeMode === 'charB' || deps.scribeMode === 'auto') {
-            if (deps.scribeEngine === 'galgame') {
+            if (deps.scribeEngine === 'module') {
+              await triggerModuleRpgEngine(
+                nonSystemNodes.slice(-deps.recentRounds),
+                node.id,
+                deps.characterB
+              );
+            } else if (deps.scribeEngine === 'galgame') {
               await triggerGalgameEngine(
                 nonSystemNodes.slice(-deps.recentRounds),
                 node.id,
@@ -1029,18 +1532,32 @@ export function useChat(deps: UseChatDeps) {
       }
     } catch (e: any) {
         if (e.name === 'AbortError') {
-          const visibleContent = stripReasoningBlocks(fullContent);
-          if (visibleContent.trim()) {
+          if (parser) {
+            for (const chunk of parser.finish()) {
+              if (!chunk.done) fullContent += chunk.content;
+            }
+          }
+          const debugResponse = deps.debugMode && parser
+            ? parser.getDebugSnapshot(fullContent)
+            : undefined;
+          const parsedStickerResponse = parseStickerResponse(
+            stripReasoningBlocks(fullContent),
+            stickerPack,
+            deps.stickerMaxCount
+          );
+          if (parsedStickerResponse.content.trim() || parsedStickerResponse.usages.length > 0 || debugResponse?.events.length) {
             const partialNode: MessageNode = {
               id: generateId(),
               conversationId: deps.conversationId,
               role: 'charB',
               senderName: deps.characterB.name,
-              content: visibleContent,
+              content: parsedStickerResponse.content || '(没说话)',
+              stickerUsages: parsedStickerResponse.usages.length > 0 ? parsedStickerResponse.usages : undefined,
               isArchived: false,
               timestamp: Date.now(),
               tokenCost: Math.ceil(fullContent.length * 0.5),
               tokenCostIsExact: false,
+              debugResponse,
             };
             await deps.addMessageNode(partialNode);
             const updatedNodes = await deps.queryNodesByConversation(deps.conversationId, { limit: 100 });
@@ -1075,12 +1592,6 @@ export function useChat(deps: UseChatDeps) {
         limit: 1,
       });
 
-      // 扫描蒸馏区间激活的世界书条目
-      let distillWbEntries: WorldBookEntry[] = [];
-      if (deps.characterA) {
-        distillWbEntries = await scanBoundWorldBooks(deps.characterA, batch.nodes, deps.maxWorldBookEntries);
-      }
-
       await deps.performDistillation({
         nodes: batch.nodes,
         sourceNodeIds: batch.plan.sourceIds,
@@ -1090,7 +1601,6 @@ export function useChat(deps: UseChatDeps) {
         distillationPrompt: deps.distillationPrompt,
         tplDistilledNodePrefix: deps.tplDistilledNodePrefix,
         prevDistilledContent: prevDistilled?.content || null,
-        activatedWorldBookEntries: distillWbEntries,
         getModelById: deps.getModelById,
         commitDistillationBatch: deps.commitDistillationBatch,
       });
@@ -1122,6 +1632,7 @@ export function useChat(deps: UseChatDeps) {
     error,
     setError,
     sendMessage,
+    sendMessageToBoth,
     triggerEavesdrop,
     triggerDistillation,
     triggerScribeSummary,
@@ -1130,6 +1641,5 @@ export function useChat(deps: UseChatDeps) {
     implantMemoryArmed,
     armImplantMemory,
     disarmImplantMemory,
-    lastPrompt,
   };
 }

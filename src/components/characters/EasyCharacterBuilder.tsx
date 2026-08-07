@@ -82,6 +82,11 @@ const REQUIREMENT_PRESETS = [
     label: '🏷️ 轻量化极简输出',
     text: '【格式规范】每轮回复不得超过 150 字。语言精炼，像微信/IM聊天一样即时、高频交互，主打快节奏的生活化对白。',
   },
+  {
+    key: 'story-options',
+    label: '🏷️ 剧情选项功能',
+    text: '【剧情选项】每轮剧情正文结束后，另起一行输出“接下来你想：”，再提供恰好 3 个简短、具体且彼此不同的编号剧情推进选项（1. / 2. / 3.）。选项必须基于当前场景和角色可执行的行动，推动剧情发展，不替玩家做决定；玩家可直接回复编号或自行行动。',
+  },
 ];
 
 // ── 3. 核心人设 AI 搜索提示词 ──
@@ -100,8 +105,8 @@ interface EasyCharacterBuilderProps {
   onClose: () => void;
   /** 初始 systemPrompt（编辑模式时传入已有内容） */
   initialPrompt?: string;
-  /** 保存回调，返回拼装后的完整 systemPrompt */
-  onSave: (prompt: string) => void;
+  /** 保存回调，返回角色名、完整 systemPrompt 与可选开场白 */
+  onSave: (name: string, prompt: string, firstMessage?: string) => void | Promise<void>;
 }
 
 // ── UI 组件：模块卡片（必须在组件外部，避免 render 时函数引用变化导致滚动跳顶）──
@@ -144,6 +149,8 @@ export default function EasyCharacterBuilder({
   onSave,
 }: EasyCharacterBuilderProps) {
   // ── 各模块状态 ──
+  const [characterName, setCharacterName] = useState('');
+  const [firstMessage, setFirstMessage] = useState('');
   const [guideKey, setGuideKey] = useState('rp');
   const [guideText, setGuideText] = useState(GUIDE_PRESETS.find((g) => g.value === 'rp')?.text || '');
   const [selectedStyles, setSelectedStyles] = useState<string[]>([]);
@@ -161,6 +168,8 @@ export default function EasyCharacterBuilder({
 
   // ── 预览弹窗 ──
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
 
   // ── 标签切换 ──
   const toggleTag = (key: string, list: string[], setter: React.Dispatch<React.SetStateAction<string[]>>) => {
@@ -253,6 +262,31 @@ export default function EasyCharacterBuilder({
 
   const assembledPreview = assemblePrompt();
 
+  const handleSave = async () => {
+    const name = characterName.trim();
+    if (!name) {
+      setSaveError('请先填写角色卡名称');
+      return;
+    }
+    if (!assembledPreview.trim()) {
+      setSaveError('角色卡内容不能为空');
+      return;
+    }
+
+    setSaving(true);
+    setSaveError('');
+    try {
+      await onSave(name, assembledPreview, firstMessage.trim() || undefined);
+      setCharacterName('');
+      setFirstMessage('');
+      onClose();
+    } catch (error) {
+      setSaveError(`保存失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <>
       {/* ── 主弹窗：全屏模块化组装器 ── */}
@@ -263,6 +297,30 @@ export default function EasyCharacterBuilder({
         maxWidth="max-w-3xl"
       >
         <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
+
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">角色卡名称</label>
+            <input
+              className="input-field"
+              value={characterName}
+              onChange={(event) => {
+                setCharacterName(event.target.value);
+                setSaveError('');
+              }}
+              placeholder="请输入角色名称"
+              maxLength={80}
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">第一句预设对话（可选）</label>
+            <textarea
+              className="input-field min-h-[90px] text-xs"
+              value={firstMessage}
+              onChange={(event) => setFirstMessage(event.target.value)}
+              placeholder="空白对话首次加载该角色时显示的开场白..."
+            />
+          </div>
 
           {/* 1. 引导头 */}
           <ModuleCard icon="🧭" title="引导头" subtitle="决定 AI 的运行模式，影响配合度与叙事自主性">
@@ -403,12 +461,17 @@ export default function EasyCharacterBuilder({
               👁 预览拼装结果
             </Button>
             <div className="flex gap-2">
-              <Button size="sm" variant="secondary" onClick={onClose}>取消</Button>
-              <Button size="sm" onClick={() => { onSave(assembledPreview); onClose(); }}>
+              <Button size="sm" variant="secondary" onClick={onClose} disabled={saving}>取消</Button>
+              <Button size="sm" onClick={handleSave} loading={saving} disabled={!characterName.trim() || !assembledPreview.trim()}>
                 ✅ 保存到角色卡
               </Button>
             </div>
           </div>
+          {saveError && (
+            <div className="text-xs text-red-300 bg-red-950/40 border border-red-700/50 rounded-md px-3 py-2">
+              {saveError}
+            </div>
+          )}
         </div>
       </Modal>
 

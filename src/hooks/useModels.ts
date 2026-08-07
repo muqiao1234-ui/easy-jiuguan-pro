@@ -4,6 +4,39 @@ import * as Stores from '../db/stores';
 import { generateId } from '../utils/id';
 
 import { apiFetch } from '../utils/apiFetch';
+import { modelsUrl } from '../utils/modelsUrl';
+
+export async function fetchAvailableModelIds(baseUrl: string, apiKey: string): Promise<string[]> {
+  const url = modelsUrl(baseUrl);
+  if (!url) throw new Error('请先填写 Base URL。');
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      ...(apiKey.trim() ? { Authorization: `Bearer ${apiKey.trim()}` } : {}),
+    },
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!response.ok) {
+    let detail = '';
+    try { detail = (await response.text()).slice(0, 180); } catch { /* ignore response body errors */ }
+    throw new Error(`获取模型失败（HTTP ${response.status}）${detail ? `：${detail}` : ''}`);
+  }
+  const payload: unknown = await response.json();
+  const rawItems = Array.isArray(payload)
+    ? payload
+    : (payload && typeof payload === 'object' && 'data' in payload && Array.isArray(payload.data)
+      ? payload.data
+      : (payload && typeof payload === 'object' && 'models' in payload && Array.isArray(payload.models) ? payload.models : []));
+  const ids = rawItems.flatMap((item) => {
+    if (typeof item === 'string') return [item];
+    if (item && typeof item === 'object' && 'id' in item && typeof item.id === 'string') return [item.id];
+    return [];
+  }).map((id) => id.trim()).filter(Boolean);
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) throw new Error('接口返回成功，但没有找到可用模型。');
+  return unique;
+}
 export function useModels() {
   const [models, setModels] = useState<ModelConfig[]>([]);
   const [loading, setLoading] = useState(false);
@@ -22,12 +55,13 @@ export function useModels() {
   }, []);
 
   const addModel = useCallback(
-    async (name: string, baseUrl: string, apiKey: string, defaultModel: string, maxContextTokens?: number, temperature?: number, topP?: number) => {
+    async (name: string, baseUrl: string, apiKey: string, defaultModel: string, maxContextTokens?: number, temperature?: number, topP?: number, secretId?: string) => {
       const model: ModelConfig = {
         id: generateId(),
         name,
         baseUrl,
         apiKey,
+        secretId,
         defaultModel,
         latency: -1,
         maxContextTokens: maxContextTokens && maxContextTokens > 0 ? maxContextTokens : 4000,
@@ -35,15 +69,21 @@ export function useModels() {
         topP: topP ?? 0.95,
       };
       await Stores.addModel(model);
-      setModels((prev) => [...prev, model]);
-      return model;
+      // API Key lives in the vault, so refresh the resolved model before exposing it
+      // to the UI. The input model intentionally contains no inline key.
+      const resolvedModel = await Stores.getModelById(model.id) || model;
+      setModels((prev) => [...prev, resolvedModel]);
+      return resolvedModel;
     },
     []
   );
 
   const updateModel = useCallback(async (id: string, updates: Partial<ModelConfig>) => {
     await Stores.updateModel(id, updates);
-    setModels((prev) => prev.map((m) => (m.id === id ? { ...m, ...updates } : m)));
+    // A changed secretId must be resolved from the vault immediately. Merging the
+    // edit form would retain the previous key in memory until a full page reload.
+    const resolvedModel = await Stores.getModelById(id);
+    setModels((prev) => prev.map((model) => (model.id === id ? (resolvedModel || { ...model, ...updates }) : model)));
   }, []);
 
   const deleteModel = useCallback(async (id: string) => {
@@ -54,7 +94,9 @@ export function useModels() {
   const pingModel = useCallback(
     async (id: string) => {
       setPinging((prev) => ({ ...prev, [id]: true }));
-      const model = models.find((m) => m.id === id);
+      // Always resolve just before sending. This prevents a newly replaced named
+      // secret from using a stale in-memory API key during the first Ping request.
+      const model = await Stores.getModelById(id);
       if (!model) {
         setPinging((prev) => ({ ...prev, [id]: false }));
         return;
@@ -104,5 +146,5 @@ export function useModels() {
     [models]
   );
 
-  return { models, loading, pinging, loadModels, addModel, updateModel, deleteModel, pingModel };
+  return { models, loading, pinging, loadModels, addModel, updateModel, deleteModel, pingModel, fetchAvailableModelIds };
 }

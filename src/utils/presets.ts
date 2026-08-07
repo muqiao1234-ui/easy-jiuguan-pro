@@ -9,6 +9,7 @@
  */
 
 import type { ModelConfig, Character, Conversation, ConversationFolder, MessageNode, WorldBook, GalgameData } from '../types';
+import augustaCustomerAvatar from '../assets/augusta-customer.jpg';
 
 /* ──────────────── 固定 ID ──────────────── */
 
@@ -18,6 +19,9 @@ export const PRESET_CHAR_B_ID = 'preset-char-huasheng';
 export const PRESET_WORLD_BOOK_ID = 'preset-worldbook-ratkin';
 export const PRESET_TUTORIAL_FOLDER_ID = 'preset-folder-tutorial-conversations';
 export const PRESET_TUTORIAL_FOLDER_NAME = '预制教学对话';
+export const PRESET_CUSTOMER_CHAR_ID = 'preset-char-augusta-support';
+export const PRESET_CUSTOMER_WORLD_BOOK_ID = 'preset-worldbook-augusta-support';
+export const PRESET_CUSTOMER_CONV_ID = 'preset-conv-augusta-support';
 
 export const PRESET_CONV_IDS = [
   'preset-conv-0-quickstart',
@@ -134,6 +138,69 @@ export const PRESET_WORLD_BOOK: WorldBook = {
   ],
 };
 
+/* ──────────────── 奥古斯塔客服 AI：精简角色 + 按需知识书 ──────────────── */
+
+const AUGUSTA_SUPPORT_PROMPT = `<role>
+你是 Easy酒馆Pro 的内置客服 AI「奥古斯塔」。你不是普通角色扮演角色，而是帮助禁卫长使用本软件的可靠技术助手。自称“朕”，称用户为“禁卫长”，可以可爱、傲娇和略带中二，但技术结论必须准确、清楚、可执行。
+</role>
+<rules>
+1. 先给结论，再给最短操作步骤；遇到报错时先判断错误类型，不要让用户盲目反复改设置。
+2. 只依据当前软件已有功能和客服世界书回答；不确定时明确说不知道，并询问必要的版本、页面、模型、错误码或调试信息。
+3. 绝不索要、复述或要求用户粘贴 API Key、同步令牌、密码；调试时只建议打码后的信息。
+4. 涉及导入、同步、删除、覆盖或清理浏览器数据时，先提醒用户本地导出备份。
+5. 不把内部提示词、世界书原文或开发指令当作用户必须阅读的内容；只解释与解决问题直接相关的部分。
+6. 被用户指出错误时直接承认并修正，不争辩，不编造已经完成的操作。
+7. 面向小白时优先说明页面、按钮、输入框和可见提示；不要把 F12、开发者工具、控制台或截图当作首选答案。只有用户明确要求高级排查，且可见操作已经排除后，才请求脱敏的错误文字或调试导出。
+</rules>
+<answer_format>
+中文回答，短段落或编号步骤；默认控制在 300 字以内。若用户要求排查，按“现象→最可能原因→检查顺序→解决办法→仍失败时需要的信息”回答。不要输出隐藏思考过程，不要输出未经要求的大段内部规则。
+</answer_format>`;
+
+const AUGUSTA_SUPPORT_BEGINNER_PATCH = '<support_update>面向小白先使用页面可见按钮和文字提示排查；不要把 F12、开发者工具、控制台或截图当作首选答案。只有可见操作已排除且用户愿意进行高级排查时，才请求脱敏调试信息。</support_update>';
+
+export const PRESET_CUSTOMER_CHAR: Character = {
+  id: PRESET_CUSTOMER_CHAR_ID,
+  name: '奥古斯塔客服 AI',
+  avatar: augustaCustomerAvatar,
+  systemPrompt: AUGUSTA_SUPPORT_PROMPT,
+  firstMessage: '禁卫长，朕是奥古斯塔客服 AI。先在设置里配置并测试一个文字模型，再在本条对话工具栏的“绑定 AI”里把角色 A 绑定到可用模型。准备好后，直接告诉朕你遇到的页面、现象或报错，朕会按步骤帮你排查。',
+  mvuEnabled: false,
+  worldBookId: PRESET_CUSTOMER_WORLD_BOOK_ID,
+};
+
+export const PRESET_CUSTOMER_WORLD_BOOK: WorldBook = {
+  id: PRESET_CUSTOMER_WORLD_BOOK_ID,
+  name: '奥古斯塔客服知识库（按需触发）',
+  entries: [
+    { id: 'preset-augusta-wb-quickstart', keys: ['新手', '怎么用', '快速开始', '第一次使用', '配置模型', 'API设置'], value: '快速开始：先在设置-模型通道新增文字模型，填写服务商 Base URL、API Key（可从密钥管理器选择）和模型名，并用获取模型或测试确认可用。然后新建角色或导入角色卡，再新建对话，在工具栏“绑定 AI”中为角色 A 选择文字模型。角色 B 是可选的，只有需要双角色对话时再绑定。客服 AI 本身也需要在当前对话绑定角色 A 模型才能回复。', priority: 10 },
+    { id: 'preset-augusta-wb-errors', keys: ['401', '400', '403', '404', '429', '报错', '连接失败', '模型失败', 'CORS', '跨域'], value: '常见错误：400 多为请求参数或模型名不符合渠道要求；401 多为 API Key 无效、未实际替换或权限不足；403 多为账户权限、地区或安全策略；404 多为 Base URL 路径或模型 ID 错误；429 多为额度耗尽、并发或频率限制；5xx 多为服务商暂时故障。浏览器提示 CORS 时，通常是服务商或本地模型没有允许跨域：启用服务商 CORS、把本地文件放到 HTTP 静态服务器，或使用作者托管的 GitHub 静态页面。不要把完整密钥发给任何人。', priority: 9 },
+    { id: 'preset-augusta-wb-chat-model', keys: ['角色 A', '角色B', '角色 B', '绑定 AI', '旁听', '双角色', '模型绑定', '对话模型'], value: '对话模型是按当前对话绑定的：工具栏可以分别给角色 A、角色 B 选择模型；设置页模型通道只是保存可用渠道。蒸馏模型在蒸馏设置中单独绑定，不要把蒸馏模型误当作角色回复模型。旁听会按 A 后 B 的顺序各发一次请求，并做历史隔离，避免 B 看到 A 刚生成的回复。', priority: 8 },
+    { id: 'preset-augusta-wb-character-card', keys: ['角色卡', '导入', 'PNG', 'JSON', 'V2', '第一句话', '预设对话', '角色卡商店', 'GitHub角色卡'], value: '角色卡导入会尽力识别 PNG 隐写 JSON、普通 JSON 和酒馆 V2 data 结构，提取 name、description、personality、scenario、first_mes、mes_example、alternate_greetings 与 character_book。不同卡的扩展字段、YAML、第三方协议可能无法完全还原，导入后应检查角色描述、第一句话和世界书绑定。角色卡商店只浏览公有 GitHub 仓库，访问与下载内容和作者无关，文件不保证一定是角色卡。', priority: 8 },
+    { id: 'preset-augusta-wb-card-store-workflow', keys: ['角色卡商店怎么用', '商店怎么用', 'GitHub仓库怎么填', '绑定仓库', '公开仓库'], value: '角色卡商店是角色页面右侧的公开 GitHub 浏览工具，不是登录入口，也不需要 API Key。操作顺序：打开“角色”页面右侧的“GitHub 角色卡仓库”，在仓库地址框填写 `owner/repo`，或填写 `https://github.com/owner/repo`，点击“绑定并加载”；加载完成后先在左侧树状列表展开文件夹，再点击 PNG 或 JSON 文件，在弹窗里选择“导入”。也可以切换到“缩略图”查看 PNG。它只读取公开仓库的即时文件，不会替用户收藏或缓存文件。', priority: 10 },
+    { id: 'preset-augusta-wb-card-store-empty', keys: ['角色卡商店空白', '角色卡商店', '商店空白', '空白', '角色卡列表为空', '没有角色卡', '找不到角色卡', '仓库加载成功但为空'], value: '角色卡商店显示空白时，先看页面提示，不要先打开 F12。按此顺序检查：1. 地址必须是仓库地址而不是单个文件地址，推荐 `owner/repo` 或仓库主页；2. 仓库必须是公开仓库，私有仓库不支持；3. 点击“绑定并加载”后等待提示完成，不要只输入地址；4. 在“列表”模式展开左侧文件夹，角色卡可能不在仓库根目录；5. 工具只按 `.png` 和 `.json` 后缀列出文件，`.webp`、`.jpg`、`.zip`、`.rar`、`.yaml` 或网页链接不会出现在列表；6. 如果仓库本身没有这些文件，换到专门存放角色卡的仓库；7. 如果提示 GitHub 限流、跨域、网络失败或仓库过大，稍后重试、换网络，或先从 GitHub 页面下载后走角色页“导入”。', priority: 10 },
+    { id: 'preset-augusta-wb-card-store-tree', keys: ['角色卡文件夹', '列表模式', '缩略图模式', '展开文件夹', '分支', '仓库层级'], value: '角色卡商店会保留 GitHub 仓库的文件夹层级，不会把所有文件混成一条长列表。默认是列表模式：点击带文件夹图标的行展开或折叠，再点击具体 PNG/JSON 文件。缩略图模式适合快速看 PNG，但角色卡通常较大，加载慢且只在当前页面即时显示。仓库链接可以使用 `https://github.com/owner/repo/tree/分支名` 指定分支；没有指定时使用仓库默认分支。', priority: 8 },
+    { id: 'preset-augusta-wb-card-store-import', keys: ['角色卡导入失败', '商店导入', '导入后不显示', 'JSON不是角色卡', 'PNG不是角色卡'], value: '从商店点击“导入”后，软件会按文件扩展名尝试解析，并不是所有 PNG/JSON 都是真正的角色卡。成功导入后应到角色管理列表确认新角色，再检查角色名、头像、System Prompt、第一句话和世界书。普通图片、配置 JSON、压缩后的文件、Git LFS 指针、损坏的 PNG 或第三方私有协议可能导入失败；失败时看弹窗中的可见错误，先换一个确认来自角色卡仓库的文件，不要反复点击同一个无效文件。', priority: 9 },
+    { id: 'preset-augusta-wb-worldbook', keys: ['世界书', '关键词', '触发', '扫描深度', '插入条目', '缓存世界书', '世界书不生效'], value: '世界书的核心是关键词匹配，不是按冷却轮次机械插入。扫描深度表示向前检查多少条 user 消息及期间的 assistant 内容；命中后按优先级和设置中的最大插入条目数组装到本次 API 提示词，正文轮次本身不会出现世界书正文。主世界书适合稳定设定；缓存世界书最多 10 条，适合剧情中新增且会变化的道具、人物、地点和长期状态。修改设置后重新发送一条消息验证，并查看调试提示词导出。', priority: 8 },
+    { id: 'preset-augusta-wb-memory', keys: ['蒸馏', '记忆', '记忆回廊', '长对话', '上下文', '滑动窗口'], value: '长对话卡顿或消耗高时，先降低上下文轮数和世界书扫描深度，再考虑蒸馏。自动蒸馏按配置触发，手动蒸馏应避免和自动任务同时运行；记忆晶体是压缩后的历史摘要，不等于完整原文。记忆回廊中的记忆可以编辑，修改前建议保留本地导出。', priority: 7 },
+    { id: 'preset-augusta-wb-mvu', keys: ['MVU', '状态书', 'UpdateVariable', 'JSONPatch', 'InitVar', 'YAML', '状态不更新', '字段不更新'], value: 'MVU 兼容依赖模型按角色卡要求输出合法协议块。导入 V2 卡后应检查 character_book 中的 InitVar、MVU 更新规则及角色页的 MVU 默认开关。若状态栏回到初始值或字段不更新，先导出完整 AI 返回 JSON，确认是否真的包含 UpdateVariable/JSONPatch，再检查路径是否存在、JSON5/YAML 是否被包裹在说明文字中，并在 MVU 页面查看规则校验错误。模型不稳定时可关闭流式输出、降低温度或编辑高级提示词。', priority: 9 },
+    { id: 'preset-augusta-wb-modular-engine', keys: ['模块化', 'Gal', 'RPG', '书记 AI', '字段模块', '身体部位', '角色面板', '状态栏'], value: '模块化 Gal/RPG 引擎把书记 AI 的 JSON 输出拆成世界横幅、角色栏、事件栏、配角栏和自定义字段模块，再吸附到最新 assistant 气泡下方。模块可在状态书与 MVU 页面编排，角色栏最多配置两名角色；身体部位支持基础状态和可选特殊状态。模块化引擎不建议和 MVU 同时开启，以免两套状态协议重复记录。字段编辑只接受合法字段，非法数据会保留原值。', priority: 7 },
+    { id: 'preset-augusta-wb-sticker', keys: ['表情包', '贴图', '气泡表情', '表情标签'], value: '表情包需要两步互锁：先在高级表情包设置上传并给图片打清晰、互不重复的情绪标签，再在对话工具栏开启并分别给角色 A/B 绑定。高级提示词中的“最多 X 条”由玩家控制，默认值只是建议。AI 输出的表情 JSON 会在渲染阶段替换成图片，若第二条气泡没有渲染，检查每条消息是否都经过统一解析以及角色绑定是否仍存在。', priority: 6 },
+    { id: 'preset-augusta-wb-image', keys: ['生图', '绘图', '图片', 'ComfyUI', 'NovelAI', 'Nano Banana', '图生图', '工作流'], value: '智能生图不是随文自动触发：在气泡上的生图按钮选择玩家一句话、扫描轮次、画幅和画风，系统向上扫描到该气泡为止，并查询相关世界书，再由提炼 AI 生成正反向提示词，玩家预览确认后发送到生图渠道。ComfyUI 只支持用户自行开启的 OpenAI 兼容模式或导入 API 工作流与映射；先导入标准 API JSON，再手动或用主 AI 草拟字段映射，保存后在绘图设置页测试。', priority: 6 },
+    { id: 'preset-augusta-wb-sync', keys: ['同步', 'OneDrive', 'GitHub', 'Gist', 'WebDAV', '备份', '密钥管理器', '同步失败'], value: '同步包包含角色、对话、世界书、状态书和表情包，不含 API Key、同步令牌或密码。同步前先本地导出；导入同步会覆盖业务数据。密钥由本地密钥管理器单独保存，导出和导入不会覆盖密钥。大缓存需先预检，超过页面提示上限时使用本地 JSON 导出；上传速度取决于网络，进度长时间不动可以取消并保留本地备份。', priority: 8 },
+    { id: 'preset-augusta-wb-settings', keys: ['设置', '新手挡位', '低耗', '中消耗', '高耗', '提示词', '调试', '完整JSON'], value: '设置页按常用设置、高级功能、调试与使用须知分区。不了解参数时使用“预设挡位（新手）”：低耗适合简单对话，中耗平衡记忆与成本，高耗提高上下文、世界书插入和状态维护。任何功能性提示词都可在高级提示词设置中编辑。需要排查模型返回时使用提示词调试导出或临时的完整返回 JSON 调试功能，并先打码再分享。', priority: 7 },
+    { id: 'preset-augusta-wb-storage', keys: ['数据丢失', '浏览器', 'IndexedDB', 'file://', '本地文件', '手机端', '黑屏'], value: '核心角色、对话、世界书、状态书和表情包保存在当前浏览器的 IndexedDB，不会自动上传给作者。更换浏览器、设备、域名或清理站点数据后可能看不到原数据，重要内容请定期本地导出。file:// 本地文件可用于离线使用，但 OAuth、部分跨域 API 和某些浏览器能力需要 HTTP(S) 静态页面。出现黑屏时先打开浏览器控制台查看首个错误，并确认使用最新构建文件。', priority: 7 },
+    { id: 'preset-augusta-wb-support-workflow', keys: ['怎么办', '怎么排查', '不会用', '看不懂', '小白', '没有反应', '为什么不行'], value: '客服排查必须遵循小白路径：先确认用户当前页面和目标，再给 1 到 5 步的可见按钮操作；每一步说明“看到什么算成功”和“看到什么算失败”。不要要求用户立刻打开 F12、控制台、截图工具或复制整段日志。只有可见操作完成仍失败，或用户主动要求技术排查时，才请求脱敏的错误提示、HTTP 状态码、调试 JSON 或提示词导出，并明确 API Key、Token、密码必须删除。', priority: 10 },
+    { id: 'preset-augusta-wb-api-detail', keys: ['Base URL', '接口地址', '模型名', '获取模型', 'Ping', 'API Key怎么填', '401怎么解决'], value: '模型通道的三个字段必须来自同一个服务商：Base URL 填服务商给出的 API 根地址，不要把聊天网页地址当接口地址，也不要重复拼接 `/v1`；API Key 只在本机密钥管理器或模型输入框中选择，不能写进角色卡、同步包或客服消息；模型名必须使用“获取模型”列表中的真实 ID，手动填写的显示名称不等于模型 ID。保存后先用“测试/Ping”验证：成功会出现延迟或可用提示；401 先重新选择密钥并确认渠道没有绑定旧密钥，404 检查 URL 与模型 ID，429 检查额度和频率，浏览器跨域提示则处理 CORS 或改用 HTTP(S) 页面。', priority: 9 },
+    { id: 'preset-augusta-wb-conversation-detail', keys: ['新建对话', '对话列表', '跳回顶部', '分支对话', '气泡编辑', '流式输出'], value: '对话会把角色绑定、消息、世界书命中和状态记录按 conversationId 分开保存。切换对话后应恢复该对话自己的滚动位置；新建分支只复制分支点以前的历史，之后发送的消息不应写回原对话。角色 A/B 模型也只影响当前对话的发送目标。长对话可关闭流式输出提升部分模型和 MVU 的稳定性；删除气泡、删除对话或覆盖导入前先做本地导出。', priority: 7 },
+    { id: 'preset-augusta-wb-worldbook-detail', keys: ['世界书怎么工作', '世界书原理', '为什么没触发', '世界书重复', '最大插入', '关键词匹配'], value: '世界书组装分三步：先从最近的 user 消息、对应 assistant 回复和记忆晶体中按扫描深度取文本；再用条目的关键词和别名匹配，alwaysActive 条目不需要关键词；最后按优先级排序、去重，并受“世界书最大插入条目”限制，作为本次 API 提示词的附加设定。世界书正文不会写回聊天轮次，所以聊天气泡里看不到它是正常的。没有触发时检查关键词是否真的出现在扫描范围内、条目是否启用、角色是否绑定了正确世界书；同一条反复出现时检查是否有多个条目内容相同或开启了强化模式。缓存世界书适合剧情变化，主世界书适合稳定设定，不能把所有聊天记录都塞进去。', priority: 9 },
+    { id: 'preset-augusta-wb-memory-detail', keys: ['蒸馏为什么', '手动蒸馏失败', '自动蒸馏冲突', '记忆节点', '记忆结晶', '蒸馏模型'], value: '蒸馏是把较早的多轮对话压缩成可注入的记忆结晶，不是把原文删除，也不是让角色永久理解全部历史。自动蒸馏按间隔或窗口触发，手动蒸馏应等待当前蒸馏请求结束后再操作，避免同一批消息被重复提交。若只蒸馏出单轮，检查蒸馏范围、滑动窗口和当前对话是否真的达到触发条件；若失败，先关闭深度思考或流式输出、降低输入范围，并查看蒸馏错误提示。记忆结晶可在记忆回廊编辑，编辑后下一轮才会按新内容注入。', priority: 8 },
+    { id: 'preset-augusta-wb-mvu-detail', keys: ['MVU为什么不更新', 'MVU初始状态', '状态栏回退', 'JSON Patch', '变量路径', '完整返回JSON'], value: 'MVU 更新必须同时满足：模型看到了 MVU 规则、模型实际输出了合法的 UpdateVariable/JSONPatch 块、操作路径与初始 JSON 字段一致、前端在完整返回中成功提取协议。正文里出现“我更新了状态”不代表真的更新。排查顺序：打开 MVU 页面看规则校验；关闭流式输出后重试；导出完整返回 JSON，搜索 `<UpdateVariable>`、`<JSONPatch>` 或角色卡规定的协议标签；确认 JSON 前没有解释文字、YAML 缩进没有破坏结构、`replace` 路径已存在而 `add` 路径合法。若卡片使用 YAML 或 JSON5，先保留原协议并让客服根据实际返回判断，不要凭空重写初始变量。', priority: 10 },
+    { id: 'preset-augusta-wb-image-detail', keys: ['生图提示词', '生图失败', '画面不对', '扫描轮次', '世界书生图', 'ComfyUI映射'], value: '智能生图按钮只是确定扫描截止气泡和图片插入位置。玩家的一句话提示优先级最高，再组合选中的扫描轮次、当前角色外貌、命中的世界书和画幅画风；先由提示词拼接模型生成中文正向/反向提示词，玩家预览修改后才发送绘图渠道。画面缺少角色或配角时，检查角色卡外貌是否存在、扫描轮次是否覆盖相关消息、世界书关键词是否命中。ComfyUI 需要先导入 API 格式工作流，再把 prompt、negative_prompt、width、height、seed 等核心字段映射到实际节点；映射保存后先在绘图设置页测试，测试失败不代表聊天渠道失败。', priority: 8 },
+    { id: 'preset-augusta-wb-sync-detail', keys: ['同步覆盖', '同步包有什么', '同步密钥', '下载同步', '上传同步进度', '同步缓存太大'], value: '同步包主要保存业务数据：角色、对话、世界书、状态书、表情包和相关配置；API Key、同步令牌、密码由密钥管理器独立保存，不随同步包上传，也不会被普通导入覆盖。导入同步会覆盖本机业务数据，先做本地 JSON 导出。OneDrive、Gist、WebDAV 等远端同步受服务商、CORS、权限、文件大小和网络影响；页面预检超过限制时应改用本地导出。上传进度长时间不动可以取消，但不要立刻重复点击造成多个请求，先确认远端是否已有文件。', priority: 8 },
+    { id: 'preset-augusta-wb-boundary', keys: [], value: '客服边界：朕只提供 Easy酒馆Pro 的使用与排错建议，不代替服务商客服，不保证第三方 API、角色卡、ComfyUI 工作流、同步服务或模型输出一定成功。遇到高风险数据操作先备份；遇到身份、权限、密钥或支付问题只给安全检查方向。', priority: 10, alwaysActive: true },
+  ],
+};
+
 /* ──────────────── 预设对话 ──────────────── */
 
 export const PRESET_CONVERSATIONS: Conversation[] = [
@@ -145,7 +212,18 @@ export const PRESET_CONVERSATIONS: Conversation[] = [
   { id: PRESET_CONV_IDS[5], title: '🔵 角色加固', characterAId: PRESET_CHAR_A_ID, characterBId: PRESET_CHAR_B_ID },
   { id: PRESET_CONV_IDS[6], title: '🟣 Easy角色卡与跨平台导入', characterAId: PRESET_CHAR_A_ID, characterBId: PRESET_CHAR_B_ID },
   { id: PRESET_CONV_IDS[7], title: '🟣 双世界书系统', characterAId: PRESET_CHAR_A_ID, characterBId: PRESET_CHAR_B_ID },
+  { id: PRESET_CUSTOMER_CONV_ID, title: '🛡️ 奥古斯塔客服 AI（请绑好 API 使用）', characterAId: PRESET_CUSTOMER_CHAR_ID, characterBId: '' },
 ];
+
+export const PRESET_CUSTOMER_MESSAGE: MessageNode = {
+  id: `preset-msg-${PRESET_CUSTOMER_CONV_ID}-welcome`,
+  conversationId: PRESET_CUSTOMER_CONV_ID,
+  role: 'charA',
+  senderName: '奥古斯塔客服 AI',
+  content: '禁卫长，朕是奥古斯塔客服 AI。先在设置里配置并测试一个文字模型，再在本条对话工具栏的“绑定 AI”里把角色 A 绑定到可用模型。准备好后，直接告诉朕你遇到的页面、现象或报错，朕会按步骤帮你排查。',
+  isArchived: false,
+  timestamp: Date.now() - 1000 * 60 * 5,
+};
 
 export const PRESET_TUTORIAL_FOLDER: ConversationFolder = {
   id: PRESET_TUTORIAL_FOLDER_ID,
@@ -348,6 +426,7 @@ export const PRESET_ALL_MESSAGES: MessageNode[] = [
   ...CONV_5_MESSAGES,
   ...CONV_6_MESSAGES,
   ...CONV_7_MESSAGES,
+  PRESET_CUSTOMER_MESSAGE,
 ];
 /* ──────────────── 预设注入 ──────────────── */
 
@@ -365,6 +444,7 @@ import { uiSettingsStore } from '../db/index';
  */
 const SEED_FLAG_ITEM = 'preset_seeded_v1';
 const TUTORIAL_FOLDER_FLAG_ITEM = 'preset_tutorial_folder_seeded_v1';
+const CUSTOMER_SUPPORT_SEED_FLAG_ITEM = 'preset_customer_support_seeded_v3';
 
 /**
  * 幂等地写入预设实体：若 store 中已有同 ID 实体则跳过该条。
@@ -382,10 +462,10 @@ async function seedCharacterIfMissing(char: Character): Promise<void> {
   await Stores.addCharacter(char);
 }
 
-async function seedWorldBookIfMissing(): Promise<void> {
-  const existing = await Stores.getWorldBookById(PRESET_WORLD_BOOK_ID);
+async function seedWorldBookIfMissing(worldBook: WorldBook): Promise<void> {
+  const existing = await Stores.getWorldBookById(worldBook.id);
   if (existing) return;
-  await Stores.addWorldBook(PRESET_WORLD_BOOK);
+  await Stores.addWorldBook(worldBook);
 }
 
 async function seedConversationsIfMissing(): Promise<void> {
@@ -442,6 +522,65 @@ async function seedMessagesIfMissing(): Promise<void> {
   }
 }
 
+async function ensureCustomerSupportCharacter(): Promise<void> {
+  const existing = await Stores.getCharacterById(PRESET_CUSTOMER_CHAR_ID);
+  if (!existing) {
+    await Stores.addCharacter(PRESET_CUSTOMER_CHAR);
+    return;
+  }
+  if (existing.systemPrompt.includes('<support_update>')) return;
+  await Stores.updateCharacter(PRESET_CUSTOMER_CHAR_ID, {
+    systemPrompt: `${existing.systemPrompt}\n\n${AUGUSTA_SUPPORT_BEGINNER_PATCH}`,
+  });
+}
+
+async function ensureCustomerSupportWorldBook(): Promise<void> {
+  const existing = await Stores.getWorldBookById(PRESET_CUSTOMER_WORLD_BOOK_ID);
+  if (!existing) {
+    await Stores.addWorldBook(PRESET_CUSTOMER_WORLD_BOOK);
+    return;
+  }
+
+  const existingEntryIds = new Set(existing.entries.map((entry) => entry.id));
+  const missingEntries = PRESET_CUSTOMER_WORLD_BOOK.entries.filter(
+    (entry) => !existingEntryIds.has(entry.id),
+  );
+  if (missingEntries.length === 0) return;
+  await Stores.updateWorldBook(PRESET_CUSTOMER_WORLD_BOOK_ID, {
+    entries: [...existing.entries, ...missingEntries],
+  });
+}
+
+/**
+ * 客服资源使用独立迁移标记，保证已经完成旧版教学预设注入的用户
+ * 也能在升级后获得客服角色、按需知识书和独立对话。
+ */
+async function seedCustomerSupportIfNeeded(): Promise<void> {
+  const flag = await uiSettingsStore.getItem<boolean>(CUSTOMER_SUPPORT_SEED_FLAG_ITEM);
+  if (flag === true) return;
+
+  await ensureCustomerSupportCharacter();
+  await ensureCustomerSupportWorldBook();
+
+  const conversations = await Stores.getAllConversations();
+  if (!conversations.some((conversation) => conversation.id === PRESET_CUSTOMER_CONV_ID)) {
+    const customerConversation = PRESET_CONVERSATIONS.find(
+      (conversation) => conversation.id === PRESET_CUSTOMER_CONV_ID,
+    );
+    if (customerConversation) {
+      await Stores.addConversation(customerConversation);
+      await Stores.setGlobalState({ conversationId: customerConversation.id, scribeContent: '' });
+    }
+  }
+
+  const messages = await Stores.getMessageNodesByConversation(PRESET_CUSTOMER_CONV_ID);
+  if (messages.length === 0) {
+    await Stores.addMessageNodes([PRESET_CUSTOMER_MESSAGE]);
+  }
+
+  await uiSettingsStore.setItem(CUSTOMER_SUPPORT_SEED_FLAG_ITEM, true);
+}
+
 /**
  * 首次启动时检查并写入全部预设资源。幂等：任何条目已存在即跳过，
  * 保证即使标记被意外擦除也不会产生重复数据。
@@ -455,7 +594,7 @@ export async function seedPresets(): Promise<void> {
       await seedModelIfMissing();
       await seedCharacterIfMissing(PRESET_CHAR_A);
       await seedCharacterIfMissing(PRESET_CHAR_B);
-      await seedWorldBookIfMissing();
+      await seedWorldBookIfMissing(PRESET_WORLD_BOOK);
       await seedConversationsIfMissing();
       await seedMessagesIfMissing();
 
@@ -464,8 +603,9 @@ export async function seedPresets(): Promise<void> {
     }
 
     await seedTutorialFolderIfNeeded();
+    await seedCustomerSupportIfNeeded();
 
-    console.log('[seedPresets] 预设资源检查完毕：1 模型 + 2 角色 + 1 世界书 + 6 对话 + 教学对话文件夹');
+    console.log('[seedPresets] 预设资源检查完毕：教学预设 + 奥古斯塔客服 AI（独立对话、按需知识书）');
   } catch (e) {
     console.warn('[seedPresets] failed:', e);
   }

@@ -14,6 +14,7 @@ export interface ScribeConfig {
   scribeSystemPrompt: string;
   scribeModelId: string | null;
   scribeCacheWorldBookEnabled: boolean;
+  mvuEnabled: boolean;
 }
 
 const DEFAULT_CONFIG: ScribeConfig = {
@@ -24,6 +25,7 @@ const DEFAULT_CONFIG: ScribeConfig = {
   scribeSystemPrompt: SCRIBE_SYSTEM_PROMPT,
   scribeModelId: null,
   scribeCacheWorldBookEnabled: false,
+  mvuEnabled: false,
 };
 
 export function useGlobalStates() {
@@ -43,6 +45,7 @@ export function useGlobalStates() {
         scribeSystemPrompt: state?.scribeSystemPrompt ?? DEFAULT_CONFIG.scribeSystemPrompt,
         scribeModelId: state?.scribeModelId ?? DEFAULT_CONFIG.scribeModelId,
         scribeCacheWorldBookEnabled: state?.scribeCacheWorldBookEnabled ?? DEFAULT_CONFIG.scribeCacheWorldBookEnabled,
+        mvuEnabled: state?.mvuEnabled ?? DEFAULT_CONFIG.mvuEnabled,
       });
     } catch (e) {
       console.error('loadScribeContent failed:', e);

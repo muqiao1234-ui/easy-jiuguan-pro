@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import type { SendTarget, MessageNode } from '../../types';
+import type { SendTarget, MessageNode, StickerPack } from '../../types';
 import Button from '../ui/Button';
 import Icon from '../ui/Icon';
 import Modal from '../ui/Modal';
@@ -15,14 +15,19 @@ interface ChatInputProps {
   charBModelName: string | null;
   thinkingEnabled: boolean;
   onToggleThinking: () => void;
+  streamingEnabled: boolean;
+  onToggleStreaming: () => void;
   implantMemoryArmed: boolean;
   onToggleImplantMemory: () => void;
   streaming: boolean;
   isDistilling: boolean;
   scribeStreaming: boolean;
   scribeEnabled: boolean;
+  scribeModelName: string | null;
+  distillModelName: string | null;
+  auxiliaryPreview: Array<{ label: string; modelName: string }>;
   onSend: (target: SendTarget, content: string) => void;
-  onEavesdrop: () => void;
+  onEavesdrop: (content: string) => void;
   onDistill: () => void;
   onStop: () => void;
   onScribeClick: () => void;
@@ -34,6 +39,11 @@ interface ChatInputProps {
   isObserving: boolean;
   /** 所有记忆结晶节点，用于记忆回廊展示 */
   distilledNodes: MessageNode[];
+  stickerPacks: StickerPack[];
+  stickerEnabled: boolean;
+  stickerPackAId?: string;
+  stickerPackBId?: string;
+  onStickerBindingsChange: (updates: { stickerPackAId?: string; stickerPackBId?: string }) => void;
 }
 
 export default function ChatInput({
@@ -47,12 +57,17 @@ export default function ChatInput({
   charBModelName,
   thinkingEnabled,
   onToggleThinking,
+  streamingEnabled,
+  onToggleStreaming,
   implantMemoryArmed,
   onToggleImplantMemory,
   streaming,
   isDistilling,
   scribeStreaming,
   scribeEnabled,
+  scribeModelName,
+  distillModelName,
+  auxiliaryPreview,
   onSend,
   onEavesdrop,
   onDistill,
@@ -65,6 +80,11 @@ export default function ChatInput({
   onOpenMemoryCorridor,
   onEditDistilled,
   distilledNodes,
+  stickerPacks,
+  stickerEnabled,
+  stickerPackAId,
+  stickerPackBId,
+  onStickerBindingsChange,
 }: ChatInputProps) {
   const [text, setText] = useState('');
   const [toolsOpen, setToolsOpen] = useState(false);
@@ -72,7 +92,16 @@ export default function ChatInput({
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState('');
   const [editError, setEditError] = useState('');
+  const [stickerBindingOpen, setStickerBindingOpen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const activeAuxiliaryStatus = scribeStreaming
+    ? { modelName: scribeModelName || '状态书模型', label: '状态书小助手正在整理本轮记录~' }
+    : isDistilling
+      ? { modelName: distillModelName || '蒸馏模型', label: '记忆蒸馏正在收拢重要内容~' }
+      : isObserving
+        ? { modelName: charAModelName || charBModelName || '旁听模型', label: '正在帮两个角色互相认识~' }
+        : null;
 
   useEffect(() => {
     if (!streaming) inputRef.current?.focus();
@@ -111,12 +140,14 @@ export default function ChatInput({
   };
 
   const handleEavesdrop = () => {
-    const err = validateBeforeSend('charB');
+    if (!text.trim() || streaming) return;
+    const err = validateBeforeSend('charA') || validateBeforeSend('charB');
     if (err) {
       onError(err);
       return;
     }
-    onEavesdrop();
+    onEavesdrop(text.trim());
+    setText('');
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -152,6 +183,37 @@ export default function ChatInput({
         </button>
       </div>
 
+      {(activeAuxiliaryStatus || (!streaming && text.trim() && auxiliaryPreview.length > 0)) && (
+        <div
+          className="flex items-center gap-2 rounded-lg border border-amber-200/80 bg-amber-50/90 px-3 py-1.5 text-[11px] text-amber-900 shadow-sm dark:border-cyan-800/70 dark:bg-slate-800/90 dark:text-cyan-100"
+          role="status"
+          aria-live="polite"
+        >
+          <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-amber-400/20 text-amber-600 dark:bg-cyan-400/15 dark:text-cyan-300">
+            {activeAuxiliaryStatus ? '✦' : '⋯'}
+          </span>
+          {activeAuxiliaryStatus ? (
+            <span className="min-w-0 truncate">
+              <strong className="font-semibold">{activeAuxiliaryStatus.modelName}</strong>
+              <span className="ml-1.5">正在为您全力服务 · {activeAuxiliaryStatus.label}</span>
+            </span>
+          ) : (
+            <span className="min-w-0 truncate">
+              本条消息将会附带：
+              {auxiliaryPreview.map((task, index) => (
+                <React.Fragment key={`${task.label}-${task.modelName}`}>
+                  {index > 0 && '、'}
+                  <strong className="font-semibold">{task.label}</strong>
+                  <span className="mx-1">调用</span>
+                  <strong className="font-semibold">{task.modelName}</strong>
+                  <span>已经准备~</span>
+                </React.Fragment>
+              ))}
+            </span>
+          )}
+        </div>
+      )}
+
       <textarea
         ref={inputRef}
         value={text}
@@ -186,11 +248,11 @@ export default function ChatInput({
         </Button>
         <Button
           onClick={handleEavesdrop}
-          disabled={!charBId || streaming}
+          disabled={!text.trim() || !charAId || !charBId || streaming}
           variant="ghost"
           size="sm"
         >
-          <Icon name="eavesdrop" size={14} /> 旁听
+          <Icon name="eavesdrop" size={14} /> 同时告知
         </Button>
         {streaming && (
           <Button onClick={onStop} variant="danger" size="sm" title="中断流式传输">
@@ -229,6 +291,15 @@ export default function ChatInput({
             className={thinkingEnabled ? 'text-amber-500 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400'}
           >
             🧠{thinkingEnabled ? ' 深度思考中' : ' 深度思考'}
+          </Button>
+          <Button
+            onClick={onToggleStreaming}
+            variant="ghost"
+            size="sm"
+            title={streamingEnabled ? '关闭后一次性接收完整回复，可提升部分模型与 MVU 的稳定性' : '开启后逐段显示模型回复'}
+            className={streamingEnabled ? 'text-cyan-500 dark:text-cyan-400' : 'text-slate-500 dark:text-slate-400'}
+          >
+            {streamingEnabled ? '流式输出中' : '已关闭流式'}
           </Button>
           <Button
             onClick={onToggleImplantMemory}
@@ -291,8 +362,58 @@ export default function ChatInput({
           >
             📖 记忆回廊
           </Button>
+          <Button
+            onClick={() => setStickerBindingOpen(true)}
+            variant="secondary"
+            size="sm"
+            title="为角色 A/B 绑定表情包"
+            className={(stickerPackAId || stickerPackBId) && stickerEnabled ? 'text-rose-300' : ''}
+          >
+            表情包
+          </Button>
         </div>
       )}
+      <Modal
+        open={stickerBindingOpen}
+        onClose={() => setStickerBindingOpen(false)}
+        title="角色表情包绑定"
+      >
+        <div className="space-y-4">
+          <div className={`rounded-md border px-3 py-2 text-xs leading-relaxed ${
+            stickerEnabled
+              ? 'border-emerald-700/50 bg-emerald-950/20 text-emerald-200'
+              : 'border-amber-700/50 bg-amber-950/20 text-amber-200'
+          }`}>
+            {stickerPacks.length === 0
+              ? '尚未上传表情包。请先前往“设置 → 高级表情包设置”创建并打标。'
+              : stickerEnabled
+                ? '功能总开关已开启。角色仍需分别选择一组表情包，默认均为关闭。'
+                : '已上传表情包，但功能总开关尚未开启。请前往“设置 → 高级表情包设置”开启。'}
+          </div>
+          {([
+            { label: `角色 A：${charAName || '未绑定角色'}`, value: stickerPackAId || '', key: 'stickerPackAId' as const },
+            { label: `角色 B：${charBName || '未绑定角色'}`, value: stickerPackBId || '', key: 'stickerPackBId' as const },
+          ]).map((item) => (
+            <label key={item.key} className="block space-y-1">
+              <span className="text-xs text-slate-200">{item.label}</span>
+              <select
+                value={item.value}
+                disabled={stickerPacks.length === 0}
+                onChange={(event) => onStickerBindingsChange({ [item.key]: event.target.value || undefined })}
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 disabled:opacity-50"
+              >
+                <option value="">关闭</option>
+                {stickerPacks.map((pack) => (
+                  <option key={pack.id} value={pack.id}>{pack.name}（{pack.stickers.length} 张）</option>
+                ))}
+              </select>
+            </label>
+          ))}
+          <div className="flex justify-end">
+            <Button onClick={() => setStickerBindingOpen(false)}>完成</Button>
+          </div>
+        </div>
+      </Modal>
       {/* 记忆回廊弹窗 */}
       <Modal
         open={memoryCorridorOpen}

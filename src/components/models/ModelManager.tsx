@@ -5,6 +5,7 @@ import { SAMPLING_NONE } from '../../utils/constants';
 import Button from '../ui/Button';
 import Modal from '../ui/Modal';
 import Icon from '../ui/Icon';
+import * as Stores from '../../db/stores';
 
 /** 采样参数预设 */
 type PresetKey = 'creative' | 'balanced' | 'strict' | 'none';
@@ -49,7 +50,7 @@ const PRESETS: Preset[] = [
 ];
 
 export default function ModelManager() {
-  const { models, loading, pinging, loadModels, addModel, updateModel, deleteModel, pingModel } = useModels();
+  const { models, loading, pinging, loadModels, addModel, updateModel, deleteModel, pingModel, fetchAvailableModelIds } = useModels();
   const { state, dispatch } = useApp();
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -57,28 +58,41 @@ export default function ModelManager() {
     name: '',
     baseUrl: '',
     apiKey: '',
+    secretId: '',
+    secretName: '',
     defaultModel: '',
     maxContextTokens: 4000,
     temperature: 0.8,
     topP: 0.92,
   });
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [apiSecrets, setApiSecrets] = useState<Stores.SecretEntry[]>([]);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [modelFetchError, setModelFetchError] = useState('');
 
-  useEffect(() => { loadModels(); }, [loadModels]);
+  const loadApiSecrets = async () => setApiSecrets(await Stores.getAllSecrets('apiKey'));
+  useEffect(() => { loadModels(); loadApiSecrets(); }, [loadModels]);
 
   const openAdd = () => {
     setEditingId(null);
-    setForm({ name: '', baseUrl: '', apiKey: '', defaultModel: '', maxContextTokens: 4000, temperature: 0.8, topP: 0.92 });
+    setAvailableModels([]);
+    setModelFetchError('');
+    setForm({ name: '', baseUrl: '', apiKey: '', secretId: '', secretName: '', defaultModel: '', maxContextTokens: 4000, temperature: 0.8, topP: 0.92 });
     setShowModal(true);
   };
   const openEdit = (id: string) => {
     const m = models.find((x) => x.id === id);
     if (!m) return;
     setEditingId(id);
+    setAvailableModels([]);
+    setModelFetchError('');
     setForm({
       name: m.name,
       baseUrl: m.baseUrl,
-      apiKey: m.apiKey,
+      apiKey: '',
+      secretId: m.secretId || '',
+      secretName: '',
       defaultModel: m.defaultModel,
       maxContextTokens: m.maxContextTokens || 4000,
       temperature: m.temperature ?? 0.8,
@@ -87,6 +101,40 @@ export default function ModelManager() {
     setShowModal(true);
   };
 
+
+  const handleFetchModels = async () => {
+    setModelFetchError('');
+    const apiKey = form.apiKey.trim() || apiSecrets.find((secret) => secret.id === form.secretId)?.value || '';
+    setFetchingModels(true);
+    try {
+      const ids = await fetchAvailableModelIds(form.baseUrl, apiKey);
+      setAvailableModels(ids);
+      if (!form.defaultModel && ids.length === 1) setForm((prev) => ({ ...prev, defaultModel: ids[0] }));
+    } catch (error) {
+      setModelFetchError(error instanceof Error ? error.message : '获取模型失败，请检查地址、密钥和跨域设置。');
+    } finally {
+      setFetchingModels(false);
+    }
+  };
+
+  const duplicateModel = async (model: typeof models[number]) => {
+    const copy = await addModel(`${model.name} 副本`, model.baseUrl, '', model.defaultModel, model.maxContextTokens, model.temperature, model.topP, model.secretId);
+    setEditingId(copy.id);
+    setAvailableModels([]);
+    setModelFetchError('');
+    setForm({
+      name: copy.name,
+      baseUrl: copy.baseUrl,
+      apiKey: '',
+      secretId: copy.secretId || '',
+      secretName: '',
+      defaultModel: copy.defaultModel,
+      maxContextTokens: copy.maxContextTokens || 4000,
+      temperature: copy.temperature ?? 0.8,
+      topP: copy.topP ?? 0.92,
+    });
+    setShowModal(true);
+  };
   const handleSave = async () => {
     if (!form.name || !form.baseUrl || !form.defaultModel) return;
     // 钳制参数到常见大模型的安全范围，避免 400
@@ -95,12 +143,17 @@ export default function ModelManager() {
     const rawTopP = Number(form.topP);
     const safeTemp = rawTemp === SAMPLING_NONE ? SAMPLING_NONE : Math.max(0, Math.min(2, rawTemp || 0.8));
     const safeTopP = rawTopP === SAMPLING_NONE ? SAMPLING_NONE : Math.max(0, Math.min(1, rawTopP || 0.92));
+    let secretId = form.secretId || undefined;
+    if (form.apiKey.trim()) {
+      const secret = await Stores.createSecret(form.secretName.trim() || `${form.name} API Key`, form.apiKey.trim(), 'apiKey');
+      secretId = secret.id;
+      await loadApiSecrets();
+    }
+    const { apiKey: _apiKey, secretName: _secretName, ...modelForm } = form;
     if (editingId) {
-      await updateModel(editingId, { ...form, temperature: safeTemp, topP: safeTopP });
+      await updateModel(editingId, { ...modelForm, secretId, temperature: safeTemp, topP: safeTopP });
     } else {
-      const m = await addModel(form.name, form.baseUrl, form.apiKey, form.defaultModel, form.maxContextTokens, safeTemp, safeTopP);
-      if (!state.currentCharAModelId) dispatch({ type: 'SET_CHAR_A_MODEL', id: m.id });
-      if (!state.currentCharBModelId) dispatch({ type: 'SET_CHAR_B_MODEL', id: m.id });
+      const m = await addModel(form.name, form.baseUrl, '', form.defaultModel, form.maxContextTokens, safeTemp, safeTopP, secretId);
       if (!state.currentDistillModelId) dispatch({ type: 'SET_DISTILL_MODEL', id: m.id });
     }
     setShowModal(false);
@@ -149,7 +202,7 @@ export default function ModelManager() {
   };
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 min-w-0">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">模型通道</h3>
         <Button size="sm" onClick={openAdd}><Icon name="plus" size={14} /> 添加</Button>
@@ -159,16 +212,17 @@ export default function ModelManager() {
         const lat = latencyLabel(m.latency);
         const badge = presetBadge(m);
         return (
-          <div key={m.id} className="bg-slate-800/50 rounded-lg p-3 space-y-2 border border-slate-700/50">
+          <div key={m.id} className="bg-slate-800/50 rounded-lg p-3 space-y-2 border border-slate-700/50 min-w-0">
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate flex-1">{m.name}</span>
               <div className="flex items-center gap-1">
-                <button onClick={() => openEdit(m.id)} className="text-slate-700 dark:text-slate-300 hover:text-slate-300 dark:hover:text-slate-200 p-0.5"><Icon name="edit" size={14} /></button>
+                <button onClick={() => openEdit(m.id)} className="text-slate-700 dark:text-slate-300 hover:text-slate-300 dark:hover:text-slate-200 p-0.5" title="编辑渠道"><Icon name="edit" size={14} /></button>
+                <button onClick={() => void duplicateModel(m)} className="text-slate-700 dark:text-slate-300 hover:text-amber-400 p-0.5" title="复制渠道"><Icon name="copy" size={14} /></button>
                 <button onClick={() => setDeleteConfirmId(m.id)} className="text-slate-700 dark:text-slate-300 hover:text-red-400 p-0.5"><Icon name="trash" size={14} /></button>
               </div>
             </div>
-            <div className="text-xs text-slate-700 dark:text-slate-300 truncate">{m.defaultModel} @ {m.baseUrl}</div>
-            <div className="flex items-center gap-3 text-[10px] text-slate-700 dark:text-slate-300">
+            <div className="text-xs text-slate-700 dark:text-slate-300 truncate min-w-0">{m.defaultModel} @ {m.baseUrl}</div>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-700 dark:text-slate-300">
               <span>最大上下文: {(m.maxContextTokens || 4000).toLocaleString()} tokens</span>
               <span className={badge.color}>{badge.label}</span>
               {m.temperature === SAMPLING_NONE && m.topP === SAMPLING_NONE ? (
@@ -183,20 +237,17 @@ export default function ModelManager() {
               </Button>
               <span className={`text-xs ${lat.color}`}>{lat.text}</span>
             </div>
-            <div className="flex gap-1">
-              <Button size="sm" variant={state.currentCharAModelId === m.id ? 'primary' : 'ghost'}
-                onClick={() => dispatch({ type: 'SET_CHAR_A_MODEL', id: m.id })}>
-                角色A
-              </Button>
-              <Button size="sm" variant={state.currentCharBModelId === m.id ? 'primary' : 'ghost'}
-                onClick={() => dispatch({ type: 'SET_CHAR_B_MODEL', id: m.id })}>
-                角色B
-              </Button>
+            <div className="flex flex-wrap gap-1">
               <Button size="sm" variant={state.currentDistillModelId === m.id ? 'primary' : 'ghost'}
                 onClick={() => dispatch({ type: 'SET_DISTILL_MODEL', id: m.id })}>
                 蒸馏
               </Button>
+              <Button size="sm" variant={state.currentImagePromptModelId === m.id ? 'primary' : 'ghost'}
+                onClick={() => dispatch({ type: 'SET_IMAGE_PROMPT_MODEL', id: m.id })}>
+                生图提示词
+              </Button>
             </div>
+            {state.currentImagePromptModelId === m.id && <p className="text-[10px] text-sky-700 dark:text-sky-300">此文字模型只负责组装生图提示词，实际图片由生图渠道调用。</p>}
           </div>
         );
       })}
@@ -215,13 +266,31 @@ export default function ModelManager() {
             <label className="block text-xs text-slate-900 dark:text-slate-100 mb-1">Base URL</label>
             <input className="input-field" value={form.baseUrl} onChange={(e) => setForm({ ...form, baseUrl: e.target.value })} placeholder="https://api.deepseek.com" />
           </div>
-          <div>
-            <label className="block text-xs text-slate-900 dark:text-slate-100 mb-1">API Key</label>
-            <input className="input-field" type="password" value={form.apiKey} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} placeholder="sk-..." />
+          <div className="space-y-2">
+            <label className="block text-xs text-slate-900 dark:text-slate-100">命名密钥</label>
+            <select className="input-field" value={form.secretId} onChange={(e) => setForm({ ...form, secretId: e.target.value })}>
+              <option value="">不绑定密钥</option>
+              {apiSecrets.map((secret) => <option key={secret.id} value={secret.id}>{secret.name}</option>)}
+            </select>
+            {form.secretId && !apiSecrets.some((secret) => secret.id === form.secretId) && (
+              <p className="text-[10px] text-amber-700 dark:text-amber-300">该模型引用的密钥只存在于另一台设备。请选择本机密钥，或直接输入新密钥。</p>
+            )}
+            <input className="input-field" type="password" value={form.apiKey} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} placeholder={editingId ? '输入新密钥以新建并替换当前绑定' : '直接输入新 API Key'} />
+            <input className="input-field" value={form.secretName} onChange={(e) => setForm({ ...form, secretName: e.target.value })} placeholder="新密钥名称（可选）" />
+            <p className="text-[10px] text-slate-700 dark:text-slate-300">直接输入会创建本机命名密钥；留空则使用下拉框所选密钥。密钥不会出现在导出或同步文件中。</p>
           </div>
           <div>
             <label className="block text-xs text-slate-900 dark:text-slate-100 mb-1">API 模型名</label>
-            <input className="input-field" value={form.defaultModel} onChange={(e) => setForm({ ...form, defaultModel: e.target.value })} placeholder="deepseek-chat" />
+            <div className="flex gap-2">
+              <select className="input-field min-w-0 flex-1" value={availableModels.includes(form.defaultModel) ? form.defaultModel : ''} onChange={(e) => e.target.value && setForm({ ...form, defaultModel: e.target.value })}>
+                <option value="">{availableModels.length ? '从已获取的模型中选择' : '先点击“获取模型”加载下拉列表'}</option>
+                {availableModels.map((modelId) => <option key={modelId} value={modelId}>{modelId}</option>)}
+              </select>
+              <Button size="sm" variant="secondary" loading={fetchingModels} onClick={() => void handleFetchModels()} title="获取当前渠道支持的模型"><Icon name="refresh" size={13} /> 获取模型</Button>
+            </div>
+            <input className="input-field mt-2" value={form.defaultModel} onChange={(e) => setForm({ ...form, defaultModel: e.target.value })} placeholder="也可以手动填写，例如 deepseek-chat" />
+            {modelFetchError && <p className="mt-1 text-[10px] text-red-600 dark:text-red-300">{modelFetchError}</p>}
+            <p className="mt-1 text-[10px] text-slate-700 dark:text-slate-300">“获取模型”会请求当前渠道的 OpenAI 兼容 /models 接口；部分服务商不提供该接口时，仍可手动填写模型名。</p>
           </div>
           <div>
             <label className="block text-xs text-slate-900 dark:text-slate-100 mb-1">最大上下文 Token 数</label>

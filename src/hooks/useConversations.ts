@@ -59,19 +59,29 @@ export function useConversations() {
   }, []);
 
   const createConversation = useCallback(
-    async (title: string, characterAId: string, characterBId: string) => {
+    async (title: string, characterAId: string, characterBId: string, userName = '', userDescription = '') => {
       const conv: Conversation = {
         id: generateId(),
         title,
         characterAId,
         characterBId,
+        userName: userName.trim() || undefined,
+        userDescription: userDescription.trim() || undefined,
       };
       await Stores.addConversation(conv);
+
+      // Resolve the character preference before the opening message can render.
+      // This keeps first_mes MVU updates from being skipped on a fresh conversation.
+      const linkedCharacters = await Promise.all([
+        characterAId ? Stores.getCharacterById(characterAId) : Promise.resolve(undefined),
+        characterBId ? Stores.getCharacterById(characterBId) : Promise.resolve(undefined),
+      ]);
 
       // 创建 GlobalState
       await Stores.setGlobalState({
         conversationId: conv.id,
         scribeContent: '',
+        mvuEnabled: linkedCharacters.some((character) => character?.mvuEnabled === true),
       });
 
       setConversations((prev) => [...prev, conv]);

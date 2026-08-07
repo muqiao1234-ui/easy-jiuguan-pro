@@ -1,11 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
-import type { MessageNode, GalgameData } from '../../types';
+import type { MessageNode, GalgameData, ModuleRpgData } from '../../types';
 import { BUBBLE_COLORS, BUBBLE_ALIGN } from '../../utils/constants';
 import Icon from '../ui/Icon';
 import Modal from '../ui/Modal';
 import Button from '../ui/Button';
 import MarkdownRenderer from './MarkdownRenderer';
 import GalgameCard from './GalgameCard';
+import MvuBubble from './MvuBubble';
+import ModuleRpgCard from './ModuleRpgCard';
+import { getModuleRpgData } from '../../utils/moduleRpg';
 
 function isBase64Image(s: string): boolean {
   return s.startsWith('data:image/') || s.startsWith('http://') || s.startsWith('https://');
@@ -19,11 +22,16 @@ interface MessageBubbleProps {
   avatarB: string;
   onBranch?: (nodeId: string) => void;
   onRetry?: (nodeId: string) => void;
+  onCopySend?: (nodeId: string) => void;
   onDelete?: (nodeId: string) => void;
-  onEdit?: (nodeId: string, newContent: string, newScribeText?: string, newGalgameData?: GalgameData) => void;
+  onEdit?: (nodeId: string, newContent: string, newScribeText?: string, newGalgameData?: GalgameData, newModuleRpgData?: ModuleRpgData) => void;
   debugMode?: boolean;
   onExportPrompt?: (nodeId: string) => void;
+  onExportResponse?: (nodeId: string) => void;
+  onGenerateImage?: (nodeId: string) => void;
   boldColorize?: boolean;
+  stickerEnabled?: boolean;
+  stickerAssetUrls?: Record<string, string>;
 }
 
 function MessageBubble({
@@ -34,11 +42,16 @@ function MessageBubble({
   avatarB,
   onBranch,
   onRetry,
+  onCopySend,
   onDelete,
   onEdit,
   debugMode,
   onExportPrompt,
+  onExportResponse,
+  onGenerateImage,
   boldColorize,
+  stickerEnabled,
+  stickerAssetUrls,
 }: MessageBubbleProps) {
   const isUser = node.role === 'user';
   const isSystem = node.role === 'system';
@@ -122,7 +135,7 @@ function MessageBubble({
 
   const saveEdit = () => {
     const hasScribe = !!node.scribeUpdate?.isEnabled;
-    onEdit?.(node.id, editContent, hasScribe ? editScribeText : undefined, node.galgameData);
+    onEdit?.(node.id, editContent, hasScribe ? editScribeText : undefined, node.galgameData, node.moduleRpgData);
     setIsEditing(false);
     setGalgameEditing(false);
   };
@@ -133,14 +146,17 @@ function MessageBubble({
     setIsEditing(false);
   };
 
-  const hasScribeUpdate = isAIChar && node.scribeUpdate?.isEnabled && node.scribeUpdate.rawText?.trim();
-  const hasGalgameData = isAIChar && !!node.galgameData;
+  const moduleRpgData = isAIChar ? getModuleRpgData(node) : undefined;
+  const hasModuleRpgData = !!moduleRpgData;
+  const hasScribeUpdate = isAIChar && !hasModuleRpgData && node.scribeUpdate?.isEnabled && node.scribeUpdate.rawText?.trim();
+  const hasGalgameData = isAIChar && !hasModuleRpgData && !!node.galgameData;
+  const hasMvuData = isAIChar && !!node.mvuData;
   const [galgameEditing, setGalgameEditing] = useState(false);
 
   const align = BUBBLE_ALIGN[node.role] || 'justify-start';
   const color = BUBBLE_COLORS[node.role] || 'bg-slate-700';
   const bubbleShape = getBubbleShape();
-  const hasAttachments = (hasScribeUpdate || hasGalgameData) && !isEditing;
+  const hasAttachments = (hasMvuData || hasModuleRpgData || hasScribeUpdate || hasGalgameData) && !isEditing;
 
   return (
     <>
@@ -220,12 +236,23 @@ function MessageBubble({
                   content={node.content}
                   boldColorize={boldColorize}
                   boldRole={isCharA ? 'charA' : isCharB ? 'charB' : undefined}
+                  stickerUsages={stickerEnabled ? node.stickerUsages : undefined}
+                  stickerAssetUrls={stickerAssetUrls}
                 />
               )}
 
               {/* Action buttons — horizontal toolbar on hover */}
               {!isEditing && !isSystem && (
                 <div className="absolute -top-3 right-2 flex flex-row gap-0.5 opacity-0 group-hover:opacity-100 transition-all duration-150 scale-90 group-hover:scale-100 origin-right">
+                  {onGenerateImage && isAIChar && (
+                    <button
+                      onClick={() => onGenerateImage(node.id)}
+                      className="bg-slate-100 dark:bg-slate-800 hover:bg-sky-100 dark:hover:bg-slate-700 text-slate-400 hover:text-sky-500 rounded-full p-1 shadow-sm border border-slate-200 dark:border-slate-700"
+                      title="智能生图"
+                    >
+                      <span className="text-[11px] leading-none">🎨</span>
+                    </button>
+                  )}
                   {onBranch && isAIChar && (
                     <button
                       onClick={() => onBranch(node.id)}
@@ -244,13 +271,22 @@ function MessageBubble({
                       <Icon name="edit" size={13} />
                     </button>
                   )}
-                  {onRetry && isAIChar && (
+                  {onRetry && (isAIChar || isUser) && (
                     <button
                       onClick={() => setConfirmRetry(true)}
                       className="bg-slate-100 dark:bg-slate-800 hover:bg-emerald-100 dark:hover:bg-slate-700 text-slate-400 hover:text-emerald-500 rounded-full p-1 shadow-sm border border-slate-200 dark:border-slate-700"
-                      title="重新生成"
+                      title={isUser ? '重新发送此消息' : '重新生成'}
                     >
                       <Icon name="refresh" size={13} />
+                    </button>
+                  )}
+                  {onCopySend && isUser && (
+                    <button
+                      onClick={() => onCopySend(node.id)}
+                      className="bg-slate-100 dark:bg-slate-800 hover:bg-cyan-100 dark:hover:bg-slate-700 text-slate-400 hover:text-cyan-500 rounded-full p-1 shadow-sm border border-slate-200 dark:border-slate-700"
+                      title="复制文本并发送"
+                    >
+                      <Icon name="copy" size={13} />
                     </button>
                   )}
                   {onDelete && (
@@ -267,6 +303,15 @@ function MessageBubble({
             </div>
 
             {/* 状态书吸附卡片 — 融合在气泡下方 */}
+            {hasMvuData && !isEditing && <MvuBubble data={node.mvuData!} />}
+
+            {hasModuleRpgData && !isEditing && (
+              <ModuleRpgCard
+                data={moduleRpgData!}
+                onSave={(nextData) => onEdit?.(node.id, node.content, undefined, undefined, nextData)}
+              />
+            )}
+
             {hasScribeUpdate && !isEditing && (
               <div className="border-t border-dashed border-amber-300/50 dark:border-amber-700/30 bg-amber-50/60 dark:bg-amber-950/20 px-3.5 py-2">
                 <div className="flex items-center gap-1.5 mb-1">
@@ -317,7 +362,7 @@ function MessageBubble({
                   return <span>{icon}{label} {total?.toLocaleString()} Tokens</span>;
                 })()}
                 {/* Hover / 长按浮窗：明细 */}
-                {(node.tokenCostInput !== undefined || node.tokenCostTotal !== undefined) && (
+                {(node.tokenCostInput !== undefined || node.tokenCostTotal !== undefined || node.tokenCostReasoning !== undefined) && (
                   <span className="hidden group-hover/token:block absolute bottom-full left-0 z-50 mb-1 px-2.5 py-1.5 bg-slate-900 dark:bg-slate-800 border border-slate-600/50 rounded-lg shadow-xl whitespace-nowrap text-[10px]">
                     <span className="block text-slate-300">
                       📥 提示词(入): <span className="font-mono text-cyan-400">{(node.tokenCostInput ?? 0).toLocaleString()}</span>
@@ -325,6 +370,11 @@ function MessageBubble({
                     <span className="block text-slate-300">
                       📤 回复(出): <span className="font-mono text-emerald-400">{(node.tokenCost ?? 0).toLocaleString()}</span>
                     </span>
+                    {node.tokenCostReasoning !== undefined && (
+                      <span className="block text-slate-300">
+                        🧠 思考(含于出): <span className="font-mono text-fuchsia-400">{node.tokenCostReasoning.toLocaleString()}</span>
+                      </span>
+                    )}
                     <span className="block text-slate-300 border-t border-slate-600/30 mt-1 pt-1">
                       🪙 单条总计: <span className="font-mono text-amber-400">{(node.tokenCostTotal ?? node.tokenCost ?? 0).toLocaleString()}</span>
                     </span>
@@ -349,6 +399,14 @@ function MessageBubble({
               <span className="ml-2 text-emerald-500 dark:text-emerald-400">🧬 已植入记忆&状态书</span>
             )}
           </div>
+          {debugMode && isAIChar && onExportResponse && (
+            <button
+              onClick={() => onExportResponse(node.id)}
+              className="mt-1 mr-3 text-[10px] text-cyan-500 dark:text-cyan-300 hover:text-cyan-400 dark:hover:text-cyan-200 underline"
+            >
+              导出 AI 原始返回 JSON
+            </button>
+          )}
           {debugMode && isAIChar && onExportPrompt && (
             <button
               onClick={() => onExportPrompt(node.id)}
@@ -360,14 +418,16 @@ function MessageBubble({
         </div>
       </div>
 
-      <Modal open={confirmRetry} onClose={() => setConfirmRetry(false)} title="重新生成">
+      <Modal open={confirmRetry} onClose={() => setConfirmRetry(false)} title={isUser ? '重新发送' : '重新生成'}>
         <p className="text-sm text-slate-300 mb-4">
-          将删除此条 AI 回复并重新发送上一条用户消息，确定继续？
+          {isUser
+            ? '将保留这条玩家消息，删除它之后的旧回复和附属记录，再重新发送给角色 A，确定继续？'
+            : '将删除此条 AI 回复并重新发送上一条用户消息，确定继续？'}
         </p>
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={() => setConfirmRetry(false)}>取消</Button>
           <Button onClick={() => { setConfirmRetry(false); onRetry?.(node.id); }}>
-            重新生成
+            {isUser ? '重新发送' : '重新生成'}
           </Button>
         </div>
       </Modal>

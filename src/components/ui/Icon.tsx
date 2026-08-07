@@ -1,7 +1,7 @@
 import React from 'react';
 
 interface IconProps {
-  name: 'plus' | 'trash' | 'edit' | 'settings' | 'ping' | 'send' | 'branch' | 'copy' | 'distill' | 'eavesdrop' | 'chat' | 'book' | 'folder' | 'folderOpen' | 'users' | 'state' | 'close' | 'menu' | 'refresh' | 'chevron';
+  name: 'plus' | 'trash' | 'edit' | 'settings' | 'ping' | 'send' | 'branch' | 'copy' | 'distill' | 'eavesdrop' | 'chat' | 'book' | 'folder' | 'folderOpen' | 'users' | 'state' | 'image' | 'close' | 'menu' | 'refresh' | 'chevron';
   size?: number;
   className?: string;
 }
@@ -23,6 +23,7 @@ const icons: Record<string, React.ReactNode> = {
   folderOpen: <><path strokeLinecap="round" strokeLinejoin="round" d="M3 8a2 2 0 012-2h4l2 2h8a2 2 0 012 2v1" /><path strokeLinecap="round" strokeLinejoin="round" d="M3 12h18l-2 7H5l-2-7z" /></>,
   users: <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />,
   state: <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />,
+  image: <><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8.5" cy="9" r="1.5" /><path strokeLinecap="round" strokeLinejoin="round" d="M3 16l5-5 4 4 3-3 6 6" /></>,
   close: <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />,
   menu: <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />,
   refresh: <><path strokeLinecap="round" strokeLinejoin="round" d="M23 4v6h-6" /><path strokeLinecap="round" strokeLinejoin="round" d="M1 20v-6h6" /><path strokeLinecap="round" strokeLinejoin="round" d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" /></>,
