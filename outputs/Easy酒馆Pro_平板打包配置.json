@@ -1,0 +1,85 @@
+{
+  "schema": "easyjiuguanpro.webview-packaging.v1",
+  "configType": "generic-webview",
+  "target": "tablet",
+  "app": {
+    "name": "Easy酒馆Pro",
+    "versionName": "1.39 早鸟测试",
+    "versionCode": 139,
+    "packageName": "com.easyjiuguanpro.tablet",
+    "description": "本地优先的 AI 角色扮演沙盒"
+  },
+  "source": {
+    "buildCommand": "npm run build",
+    "artifact": "dist/index.html",
+    "loadMode": "local-file",
+    "fallbackWebUrl": "https://muqiao1234-ui.github.io/easy-jiuguan-pro/",
+    "doNotForceFallbackWebUrl": true
+  },
+  "runtime": {
+    "engine": "system-webview",
+    "enableJavaScript": true,
+    "enableDomStorage": true,
+    "enableIndexedDB": true,
+    "enableServiceWorkerWhenSupported": true,
+    "allowFileAccess": true,
+    "allowFileAccessFromFileUrls": true,
+    "allowUniversalAccessFromFileUrls": false,
+    "enableWebSocket": true,
+    "enableMixedContent": false,
+    "enableThirdPartyCookies": true
+  },
+  "display": {
+    "orientation": "auto",
+    "allowOrientationChange": true,
+    "fullscreen": false,
+    "statusBar": "default",
+    "fitSystemWindows": true,
+    "viewportFit": "cover",
+    "minViewport": {
+      "width": 600,
+      "height": 800
+    },
+    "wideLayoutHint": true,
+    "preferLandscapeForSplitView": true
+  },
+  "inputAndFiles": {
+    "enableFileChooser": true,
+    "enableDownloads": true,
+    "enableShareSheet": true,
+    "acceptedFileTypes": [
+      "application/json",
+      "image/png",
+      "image/jpeg",
+      "image/webp",
+      "image/gif",
+      "text/plain"
+    ]
+  },
+  "network": {
+    "allowInternet": true,
+    "allowHttpCleartext": false,
+    "requireApiCors": true,
+    "preserveApiWebSockets": true
+  },
+  "oauth": {
+    "oneDrive": {
+      "enabled": true,
+      "clientId": "e56c3d5e-5d1e-42cf-b14c-44513e68127a",
+      "redirectUri": "https://muqiao1234-ui.github.io/easy-jiuguan-pro/",
+      "requiresHttpsOrHostedPage": true,
+      "localFileLimitation": "file:// 页面不能完成 OAuth PKCE；请使用作者 GitHub 静态页面，或为包装器配置 HTTPS Redirect URI。"
+    }
+  },
+  "security": {
+    "keepApiKeysInAppStorage": true,
+    "neverInjectApiKeysIntoExport": true,
+    "disableRemoteDebuggingByDefault": true
+  },
+  "notes": [
+    "这是通用 WebView/PWA 包装配置，不是某个特定打包器的专属格式。",
+    "朋友使用 Capacitor、Android WebView、WebViewGold、Median 等工具时，请将字段映射到对应设置。",
+    "本地 file:// 运行通常无法完成 Microsoft OAuth；API 服务是否可用仍取决于服务商的 CORS 设置。",
+    "IndexedDB、文件选择器和下载能力必须保留，否则角色卡、对话、世界书和表情包可能无法正常工作。"
+  ]
+}
